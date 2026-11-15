@@ -1,11 +1,12 @@
 import { redirect } from "next/navigation";
-import { ShieldCheck, KeyRound, MonitorSmartphone } from "lucide-react";
-import { auth } from "@/lib/auth";
+import { ShieldCheck, KeyRound, MonitorSmartphone, Link2 } from "lucide-react";
+import { auth, getProviderConfig, signIn } from "@/lib/auth";
 import { TopBar } from "@/components/topbar";
 import { PageTitle } from "@/components/page-title";
 import { apiJson } from "@/lib/api";
 import { TotpPanel } from "./totp-panel";
 import { SessionsPanel } from "@/components/sessions-panel";
+import { LinkedSignInsPanel } from "@/components/linked-signins-panel";
 
 export default async function SecurityPage() {
   const session = await auth();
@@ -19,6 +20,20 @@ export default async function SecurityPage() {
   } catch {
     // fall through; the panel will reflect 'unknown' but allow enroll
   }
+
+  // "Link" runs the ordinary OAuth sign-in while signed in: Auth.js then attaches the identity to THIS account
+  // (whatever address it carries) and refuses one that already belongs to someone else.
+  const providers = await getProviderConfig();
+  async function linkGoogle() {
+    "use server";
+    await signIn("google", { redirectTo: "/me/security" });
+  }
+  async function linkMicrosoft() {
+    "use server";
+    await signIn("microsoft-entra-id", { redirectTo: "/me/security" });
+  }
+  const linkButton =
+    "rounded-md border border-slate-300 px-3 py-1.5 text-xs hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800";
 
   return (
     <>
@@ -42,6 +57,37 @@ export default async function SecurityPage() {
             <TotpPanel initialEnabled={enabled} />
           </div>
         </section>
+
+        {providers.google.enabled || providers.microsoft.enabled ? (
+          <section className="mt-6 rounded-md border border-slate-300 p-5 dark:border-slate-800">
+            <h2 className="flex items-center gap-2 text-lg font-medium">
+              <Link2 className="h-5 w-5 text-brand-600 dark:text-brand-400" aria-hidden />
+              Linked sign-in methods
+            </h2>
+            <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
+              Other accounts you can use to sign in to this same account. Two-factor codes are asked for at the local
+              password only; Google and Microsoft apply their own.
+            </p>
+            <div className="mt-4">
+              <LinkedSignInsPanel
+                linkActions={
+                  <>
+                    {providers.google.enabled ? (
+                      <form action={linkGoogle}>
+                        <button type="submit" className={linkButton}>Link a Google account</button>
+                      </form>
+                    ) : null}
+                    {providers.microsoft.enabled ? (
+                      <form action={linkMicrosoft}>
+                        <button type="submit" className={linkButton}>Link a Microsoft account</button>
+                      </form>
+                    ) : null}
+                  </>
+                }
+              />
+            </div>
+          </section>
+        ) : null}
 
         <section className="mt-6 rounded-md border border-slate-300 p-5 dark:border-slate-800">
           <h2 className="flex items-center gap-2 text-lg font-medium">

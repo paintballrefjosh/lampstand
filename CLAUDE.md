@@ -899,6 +899,24 @@ the address). Microsoft sign-in is refused when no allowed domains are set and t
 endpoint (`common`/`organizations`/`consumers`); the allowed-domain list is matched against the user
 principal name, never the free `email` claim (only a single tenant also falls back to `email`).
 
+**External identities: one person, many sign-in methods** (2026-11-14). `users` is the person, `accounts` (Auth.js's table, PK `(provider, providerAccountId)`) holds
+each linked external login and `credentials` the optional local password; any mix is valid and every identity keys on the provider's own stable id, never the email,
+after the first sign-in. **A first sign-in whose address matches an existing account attaches to it** (an admin-made account with no password is how a person is
+pre-provisioned for Google or Microsoft; one with a password can be linked too), but only for a provider that `mayLinkByEmail` (`packages/shared/src/oauth-policy.ts`,
+`OAUTH_EMAIL_TRUST`) believes: Google (`verified-claim`: the `signIn` callback has already refused an unverified address by the time Auth.js links), Microsoft only for ONE named
+tenant (`single-tenant-only`: on `common`/`organizations`/`consumers` the `email` claim is editable by the account owner, the nOAuth takeover), any other provider `never`.
+The provider config sets `allowDangerousEmailAccountLinking` from that function and nowhere else; **a new provider is added to `OAUTH_EMAIL_TRUST` on purpose** (unknown = never,
+tested). The link is then made from the profile instead: **Security > Linked sign-in methods** (`linked-signins-panel.tsx`) runs the ordinary OAuth flow while signed in, which Auth.js
+attaches to the current account whatever its address. Rules: (1) the `signIn` callback runs BEFORE the link, with a fresh random `user.id` that matches no row, so
+`provisionOAuthUser` looks the person up by email too (`byEmail`): a soft-deleted account answers `deleted`, a disabled one `rejected`, and "already in a group: an admin's
+decision stands" applies; that lookup is for the DECISION only, every write stays tied to a row under the given id. (2) Auth.js writes the `accounts` row itself, so the web's
+`linkAccount` event (skipped when `createUser` fired in the same request) calls `oauth-provision` with `linkedNow` and the API records `user.identity.link` through the dynamic
+audit (replacing that call's route row). (3) `IdentitiesService.unlink` (`GET /me/identities`, `DELETE /me/identities/:provider?id=`, `@SessionOnly`, MCP-excluded) is ONE
+conditional DELETE that only runs while a password or another identity would remain, so two racing removals cannot lock a person out (409 otherwise, 404 when it is not theirs).
+Unlinking does not end sessions made through that identity. (4) The approval rules are unchanged and differ by provider: Google can hold an outsider `pending`, Microsoft
+admits whoever its tenant or allowed-domain list admits straight into the default group. Tests: `oauth-policy.test.ts` (`mayLinkByEmail`), `oauth-link.integration.test.ts`
+(CockroachDB and YugabyteDB).
+
 **Soft delete:** `DELETE /users/:id` tombstones the row (`deleted_at`,
 `is_active=false`) but keeps authored content + audit attribution;
 `POST /users/:id/restore` reverses it; `POST /users/:id/hard-delete` (SITE_ADMIN,

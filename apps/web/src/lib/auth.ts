@@ -5,7 +5,7 @@ import MicrosoftEntraID from "next-auth/providers/microsoft-entra-id";
 import { DrizzleAdapter } from "@auth/drizzle-adapter";
 import { createHash, randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { googleSignInDecision, microsoftSignInDecision } from "@lampstand/shared";
+import { googleSignInDecision, mayLinkByEmail, microsoftSignInDecision } from "@lampstand/shared";
 import { db, schema } from "./db";
 
 const apiInternalUrl = process.env.API_INTERNAL_URL ?? "http://api:3001";
@@ -110,6 +110,10 @@ function buildProviders(cfg: ProviderConfig) {
       Google({
         clientId: cfg.google.clientId,
         clientSecret: cfg.google.clientSecret,
+        // A first Google sign-in attaches to the existing account with the same address (an admin made it, or it
+        // has a password). Safe because the `signIn` callback below has already refused an unverified address by
+        // the time Auth.js links; without this flag it would refuse with OAuthAccountNotLinked instead.
+        allowDangerousEmailAccountLinking: mayLinkByEmail("google"),
         // `hd` restricts Google's account chooser to the workspace domain. Only
         // apply it when we're domain-locked; with approval mode on we must let
         // external accounts reach the consent screen (they're gated afterwards).
@@ -130,6 +134,9 @@ function buildProviders(cfg: ProviderConfig) {
         clientId: cfg.microsoft.clientId,
         clientSecret: cfg.microsoft.clientSecret,
         issuer: `https://login.microsoftonline.com/${cfg.microsoft.tenant || "common"}/v2.0`,
+        // Microsoft's `email` claim is a free attribute of the person's own directory, so it is believed only
+        // when the directory is the one tenant we chose (see `mayLinkByEmail`). On a shared endpoint it never is.
+        allowDangerousEmailAccountLinking: mayLinkByEmail("microsoft-entra-id", { tenant: cfg.microsoft.tenant }),
       }),
     );
   }
@@ -244,6 +251,8 @@ async function provisionOAuthUser(input: {
   email: string;
   provider: string;
   hostedDomain?: string;
+  /** This call follows a new identity being attached to an existing account: the API records it in the audit log. */
+  linkedNow?: boolean;
 }): Promise<ProvisionStatus> {
   try {
     const res = await fetch(`${apiInternalUrl}/api/v1/users/oauth-provision`, {
@@ -274,6 +283,8 @@ function hostedDomainOf(provider: string, profile: unknown): string | undefined 
  */
 async function buildAuthConfig(): Promise<NextAuthConfig> {
   const cfg = await loadProviderConfig();
+  // The config is built per request, so this belongs to one sign-in: set when Auth.js creates the user row.
+  let createdThisRequest = false;
   return {
     adapter: DrizzleAdapter(db, {
       usersTable: schema.users,
@@ -398,6 +409,25 @@ async function buildAuthConfig(): Promise<NextAuthConfig> {
       },
     },
     events: {
+      // Auth.js writes the `accounts` row itself, so nothing else would record that an existing account gained a
+      // way to sign in. A brand-new user also gets a link, which is not news (createUser fires first).
+      async createUser() {
+        createdThisRequest = true;
+      },
+      async linkAccount({ user, account, profile }) {
+        if (createdThisRequest) return;
+        const provider = account?.provider;
+        if (provider !== "google" && provider !== "microsoft-entra-id") return;
+        if (!user?.id) return;
+        const email = (profile as { email?: string } | undefined)?.email ?? user.email ?? "";
+        await provisionOAuthUser({
+          userId: user.id,
+          email,
+          provider: provider === "google" ? "google" : "microsoft",
+          hostedDomain: hostedDomainOf(provider, profile),
+          linkedNow: true,
+        });
+      },
       // Runs after the adapter has persisted the user + linked the account, so
       // the API's group-grant + approval write won't hit the users FK. This is
       // what actually provisions a brand-new OAuth user (the signIn callback

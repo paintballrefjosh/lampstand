@@ -4,6 +4,7 @@ import {
   googleSignInDecision,
   isSingleTenant,
   isWorkspaceMember,
+  mayLinkByEmail,
   microsoftSignInDecision,
 } from "@lampstand/shared";
 
@@ -72,5 +73,26 @@ describe("helpers", () => {
     expect(isSingleTenant("common")).toBe(false);
     expect(isSingleTenant(undefined)).toBe(false);
     expect(isSingleTenant("contoso.onmicrosoft.com")).toBe(true);
+  });
+});
+
+describe("mayLinkByEmail", () => {
+  it("believes Google's verified address", () => {
+    expect(mayLinkByEmail("google")).toBe(true);
+  });
+  it("believes Microsoft's address only for one named tenant", () => {
+    expect(mayLinkByEmail("microsoft-entra-id", { tenant: "5b1c2a1e-0000-4000-8000-000000000000" })).toBe(true);
+    expect(mayLinkByEmail("microsoft-entra-id", { tenant: "church.onmicrosoft.com" })).toBe(true);
+  });
+  it("never links Microsoft by email on a shared endpoint or with no tenant (the nOAuth takeover)", () => {
+    for (const tenant of ["common", "organizations", "consumers", "", undefined, null]) {
+      expect(mayLinkByEmail("microsoft-entra-id", { tenant })).toBe(false);
+    }
+    expect(mayLinkByEmail("microsoft-entra-id")).toBe(false);
+  });
+  it("never links a provider it does not know, including names that collide with object keys", () => {
+    for (const p of ["facebook", "github", "", "constructor", "__proto__", "toString"]) {
+      expect(mayLinkByEmail(p, { tenant: "x" })).toBe(false);
+    }
   });
 });

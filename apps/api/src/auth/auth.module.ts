@@ -4,10 +4,11 @@ import { AuthController } from "./auth.controller";
 import { TotpController } from "./totp.controller";
 import { MeController } from "./me.controller";
 import { SessionsService } from "./sessions.service";
+import { IdentitiesService } from "./identities.service";
 
 @Global()
 @Module({
-  providers: [AuthService, SessionsService],
+  providers: [AuthService, SessionsService, IdentitiesService],
   controllers: [AuthController, TotpController, MeController],
   exports: [AuthService, SessionsService],
 })

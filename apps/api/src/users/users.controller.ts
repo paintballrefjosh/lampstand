@@ -4,7 +4,7 @@ import { PERMISSIONS, createLocalUserSchema, updateUserSchema } from "@lampstand
 import { RequirePermissions } from "../auth/permissions.decorator";
 import { Public } from "../auth/public.decorator";
 import { assertInternalCaller } from "../auth/internal-token";
-import { Audited } from "../audit/audit.decorator";
+import { Audited, recordAuditEntry, startDynamicAudit } from "../audit/audit.decorator";
 import { UsersService } from "./users.service";
 import { SessionsService } from "../auth/sessions.service";
 
@@ -22,6 +22,8 @@ const oauthProvisionBody = z.object({
   provider: z.string().min(1).max(64),
   /** Google's `hd` claim ("" when the account is not managed by a Workspace domain). */
   hostedDomain: z.string().max(253).optional(),
+  /** Set by the web's `linkAccount` event: this call follows a new identity being attached to an existing account. */
+  linkedNow: z.boolean().optional(),
 });
 const setGroupsBody = z.object({ groupIds: z.array(z.string().uuid()).max(50) });
 const resendWelcomeBody = z.object({ appOrigin: z.string().url().optional() });
@@ -236,6 +238,18 @@ export class UsersController {
     assertInternalCaller(req);
     const parsed = oauthProvisionBody.safeParse(body);
     if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
-    return this.users.provisionOAuthUser(parsed.data);
+    const { linkedNow, ...input } = parsed.data;
+    // Attaching an identity to an existing account is a security event: Auth.js writes the `accounts` row
+    // itself, so it would leave no trace. The route-level row (written for every call) is replaced by this one.
+    if (linkedNow) {
+      startDynamicAudit(req);
+      recordAuditEntry(req, {
+        action: "user.identity.link",
+        resourceType: "user",
+        resourceId: input.userId,
+        after: { provider: input.provider },
+      });
+    }
+    return this.users.provisionOAuthUser(input);
   }
 }

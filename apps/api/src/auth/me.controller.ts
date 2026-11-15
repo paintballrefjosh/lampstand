@@ -1,9 +1,10 @@
-import { Controller, Get, Put, Post, Patch, Delete, Param, Body, BadRequestException, ConflictException, Inject, NotFoundException } from "@nestjs/common";
+import { Controller, Get, Put, Post, Patch, Delete, Param, Query, Body, BadRequestException, ConflictException, Inject, NotFoundException } from "@nestjs/common";
 import { and, eq, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import { NOTIFICATION_KINDS, TICKET_PRIORITIES, type TicketSlaMap } from "@lampstand/shared";
 import { CurrentUser, SessionId, type AuthenticatedUser } from "./current-user.decorator";
 import { SessionsService } from "./sessions.service";
+import { IdentitiesService } from "./identities.service";
 import { AuthService } from "./auth.service";
 import { SettingsService } from "../settings/settings.service";
 import { DB, type Db } from "../db/db.module";
@@ -45,6 +46,7 @@ export class MeController {
   constructor(
     private readonly auth: AuthService,
     private readonly sessions: SessionsService,
+    private readonly identities: IdentitiesService,
     private readonly settings: SettingsService,
     @Inject(DB) private readonly db: Db,
   ) {}
@@ -231,6 +233,32 @@ export class MeController {
     if (!target) throw new NotFoundException("No such session");
     const ended = await this.sessions.revoke(user.id, target);
     if (!ended) throw new NotFoundException("No such session");
+    return { ok: true };
+  }
+
+  /** The external sign-ins (Google, Microsoft) linked to this account, and whether it also has a local password. */
+  @Get("identities")
+  @SessionOnly()
+  async listIdentities(@CurrentUser() user: AuthenticatedUser) {
+    return this.identities.list(user.id);
+  }
+
+  /**
+   * Remove one linked sign-in. Refused (409) when it is the only way in. Adding one is not a route: it is the
+   * Auth.js sign-in flow run while signed in, which attaches the identity to the current account.
+   */
+  @Delete("identities/:provider")
+  @SessionOnly()
+  @Audited({ action: "user.identity.unlink", resourceType: "user", resourceIdFromParams: (p) => p.provider ?? null })
+  async unlinkIdentity(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("provider") provider: string,
+    @Query("id") providerAccountId: string | undefined,
+  ) {
+    if (!providerAccountId || providerAccountId.length > 256 || provider.length > 64) {
+      throw new BadRequestException("Say which sign-in method to remove");
+    }
+    await this.identities.unlink(user.id, provider, providerAccountId);
     return { ok: true };
   }
 

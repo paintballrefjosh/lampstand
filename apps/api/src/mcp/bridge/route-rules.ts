@@ -49,6 +49,7 @@ export const ROUTE_RULES: RouteRule[] = [
   { pattern: "GET /status/public", status: "excluded", reason: "the public copy of /status (which is a tool), for people who are not signed in" },
   { pattern: "* /alert-channels/**", status: "excluded", reason: "alert channels hold webhook addresses and tokens: configured in the web app, like devices with logins" },
   { pattern: "* /me/push/**", status: "excluded", reason: `browser push subscriptions send the owner's notices to a device: ${SESSION_ONLY}` },
+  { pattern: "* /me/identities/**", status: "excluded", reason: `the external sign-ins linked to the account, and removing them: ${SESSION_ONLY}` },
   { pattern: "* /me/sessions/**", status: "excluded", reason: `the list of signed-in browsers and ending them: ${SESSION_ONLY}` },
   { pattern: "GET /users/:id/sessions", status: "excluded", reason: "another person's signed-in browsers (addresses and devices) stay in the admin web app" },
   { pattern: "GET /admin/security-posture", status: "excluded", reason: `a map of the site's weak spots: ${SESSION_ONLY}` },

@@ -340,10 +340,25 @@ export class UsersService {
       .from(users)
       .where(eq(users.id, input.userId))
       .limit(1);
+    // A first-time sign-in carries a fresh random id that matches no row, even when an admin already made
+    // an account for this address and Auth.js is about to attach the identity to it (see `mayLinkByEmail`).
+    // Look that account up by email so a deleted or disabled one is judged here, before the link is made,
+    // and so "already in a group: an admin's decision stands" applies to it. Decisions only: every write
+    // below stays tied to a row that exists under `input.userId`.
+    const [byEmail] = existing
+      ? []
+      : await this.db
+          .select({ id: users.id, deletedAt: users.deletedAt, isActive: users.isActive })
+          .from(users)
+          .where(sql`lower(${users.email}) = ${input.email.trim().toLowerCase()}`)
+          .limit(1);
     // A soft-deleted account must never be resurrected by a returning OAuth
     // identity (its accounts row still points here). Deny before anything else.
-    if (existing?.deletedAt) return { status: "deleted" };
+    if (existing?.deletedAt || byEmail?.deletedAt) return { status: "deleted" };
+    // A disabled account does not gain a new way to sign in.
+    if (byEmail && !byEmail.isActive) return { status: "rejected" };
     const userExists = existing !== undefined;
+    const judgedId = existing ? input.userId : byEmail?.id;
 
     if (input.provider !== "google") {
       if (userExists) {
@@ -354,7 +369,7 @@ export class UsersService {
     }
 
     // Already provisioned (has a group) — leave the admin's decision intact.
-    if (userExists && (await this.hasAnyGroup(input.userId))) {
+    if (judgedId && (await this.hasAnyGroup(judgedId))) {
       return { status: "approved" };
     }
 
