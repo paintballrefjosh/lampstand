@@ -1,4 +1,4 @@
-import { Agent } from "undici";
+import { outboundBlockedMessage, outboundFetch } from "../net/outbound";
 import type { DnsRecordData } from "@lampstand/shared";
 
 /**
@@ -36,14 +36,10 @@ export class TechnitiumError extends Error {
 // dead node.
 const REQUEST_TIMEOUT_MS = 8_000;
 
-// Node's global `fetch` ignores the legacy `agent` option; an undici `Agent`
-// passed as `dispatcher` is the only way to scope the TLS-verify override to
-// these requests. One per mode so connections are pooled across calls.
-const verifyingAgent = new Agent({ connect: { rejectUnauthorized: true } });
-const insecureAgent = new Agent({ connect: { rejectUnauthorized: false } });
-
 /** Unwrap undici's generic "fetch failed" into the actionable cause. */
 function describeFetchError(err: unknown): string {
+  const blocked = outboundBlockedMessage(err);
+  if (blocked) return blocked;
   const e = err as { message?: string; cause?: { code?: string; message?: string } };
   const cause = e?.cause;
   if (cause?.code === "DEPTH_ZERO_SELF_SIGNED_CERT" || cause?.code === "SELF_SIGNED_CERT_IN_CHAIN") {
@@ -91,13 +87,16 @@ export async function technitiumCall<T>(
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   let res: Response;
   try {
-    res = await fetch(url, {
+    // The primary's address is typed by an admin: `outboundFetch` refuses this machine, link-local and the stack's own
+    // containers, on the address the connection really uses, and scopes the TLS-verify override to this request.
+    res = await outboundFetch(url, {
       method,
       headers,
       body: method === "POST" ? query : undefined,
-      dispatcher: cfg.verifyTls ? verifyingAgent : insecureAgent,
+      verifyTls: cfg.verifyTls,
+      allowShortNames: true,
       signal: controller.signal,
-    } as RequestInit & { dispatcher: Agent });
+    });
   } catch (err) {
     const msg =
       (err as Error)?.name === "AbortError"

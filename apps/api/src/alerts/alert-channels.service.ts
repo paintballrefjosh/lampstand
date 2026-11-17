@@ -1,6 +1,5 @@
 import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { createHmac } from "node:crypto";
-import { lookup } from "node:dns/promises";
 import { asc, eq } from "drizzle-orm";
 import {
   ALERT_CHANNEL_SECRET,
@@ -9,7 +8,6 @@ import {
   alertDestinationProblem,
   buildAlertRequests,
   channelWantsAlert,
-  isForbiddenAlertAddress,
   type AlertChannel,
   type AlertChannelEvents,
   type AlertChannelType,
@@ -22,6 +20,7 @@ import { DB, type Db } from "../db/db.module";
 import { alertChannels } from "../db/schema";
 import { SettingsService } from "../settings/settings.service";
 import { decryptStoredSecret, encryptSecret } from "../settings/crypto";
+import { outboundBlockedMessage, outboundFetch } from "../net/outbound";
 
 type Row = typeof alertChannels.$inferSelect;
 
@@ -186,23 +185,27 @@ export class AlertChannelsService {
       for (const req of requests) {
         const problem = alertDestinationProblem(r.type as AlertChannelType, req.url);
         if (problem) throw new Error(problem);
-        await this.refuseLinkLocal(req.url);
-        const res = await fetch(req.url, {
+        // outboundFetch judges the address the socket really connects to (no check-then-resolve-again gap) and never follows a redirect.
+        const res = await outboundFetch(req.url, {
           method: req.method,
           headers: { ...req.headers, "user-agent": "lampstand-alerts" },
           body: req.body,
-          redirect: "manual",
+          maxRedirects: 0,
           signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
         });
         if (res.status < 200 || res.status >= 300) {
-          const text = (await res.text().catch(() => "")).replace(/\s+/g, " ").slice(0, 200);
+          // A hosted service's own error words help ("invalid_token"); a destination the admin typed (ntfy, webhook) answers with
+          // whatever sits at that address, which is shown to the admin, so only the status goes on the channel.
+          const custom = r.type === "ntfy" || r.type === "webhook";
+          const text = custom ? "" : (await res.text().catch(() => "")).replace(/\s+/g, " ").slice(0, 200);
           throw new Error(`The service answered ${res.status}${text ? `: ${text}` : ""}`);
         }
       }
       await this.db.update(alertChannels).set({ lastSentAt: new Date(), lastError: null, lastErrorAt: null }).where(eq(alertChannels.id, r.id));
     } catch (err) {
       const raw = err instanceof Error ? err.message : String(err);
-      const message = /aborted|timeout/i.test(raw) ? `No answer within ${SEND_TIMEOUT_MS / 1000} seconds.` : raw.slice(0, 500);
+      const blocked = outboundBlockedMessage(err);
+      const message = blocked ? blocked.slice(0, 500) : /aborted|timeout/i.test(raw) ? `No answer within ${SEND_TIMEOUT_MS / 1000} seconds.` : raw.slice(0, 500);
       this.logger.warn(`alert channel "${r.name}" (${r.type}) failed: ${message}`);
       await this.db
         .update(alertChannels)
@@ -210,20 +213,6 @@ export class AlertChannelsService {
         .where(eq(alertChannels.id, r.id))
         .catch(() => undefined);
       throw new BadRequestException(message);
-    }
-  }
-
-  /** A host name that resolves to a link-local address is refused like the literal (a DNS name for cloud metadata). */
-  private async refuseLinkLocal(url: string): Promise<void> {
-    const host = new URL(url).hostname;
-    let addrs: { address: string }[] = [];
-    try {
-      addrs = await lookup(host, { all: true });
-    } catch {
-      return; // the request itself will fail with a clearer message
-    }
-    if (addrs.some((a) => isForbiddenAlertAddress(a.address))) {
-      throw new Error("That address resolves to a link-local address (where cloud metadata services live) and is not allowed.");
     }
   }
 }

@@ -128,26 +128,72 @@ export function streamUrlProblem(raw: string): string | null {
   return null;
 }
 
-/** Loopback, link-local (cloud metadata), unspecified. Private LAN ranges are allowed: an encoder's own HLS output lives there. */
+/** The four bytes of a strict dotted-quad, or null (anything else is not an IPv4 literal). */
+function parseIPv4(text: string): [number, number, number, number] | null {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(text);
+  if (!m) return null;
+  const parts = [Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4])] as [number, number, number, number];
+  return parts.every((n) => n <= 255) ? parts : null;
+}
+
+/** The eight 16-bit groups of an IPv6 literal (zone id and a dotted IPv4 tail allowed), or null when it is not one. */
+function parseIPv6(text: string): number[] | null {
+  let t = text.split("%")[0]!;
+  if (!t.includes(":")) return null;
+  // A dotted IPv4 tail (::ffff:1.2.3.4) is two groups.
+  const tail = /(\d{1,3}(?:\.\d{1,3}){3})$/.exec(t);
+  if (tail) {
+    const v4 = parseIPv4(tail[1]!);
+    if (!v4) return null;
+    t = `${t.slice(0, t.length - tail[1]!.length)}${((v4[0] << 8) | v4[1]).toString(16)}:${((v4[2] << 8) | v4[3]).toString(16)}`;
+  }
+  const halves = t.split("::");
+  if (halves.length > 2) return null;
+  const toGroups = (h: string): number[] | null => {
+    if (h === "") return [];
+    const out: number[] = [];
+    for (const g of h.split(":")) {
+      if (!/^[0-9a-f]{1,4}$/.test(g)) return null;
+      out.push(parseInt(g, 16));
+    }
+    return out;
+  };
+  const head = toGroups(halves[0]!);
+  if (!head) return null;
+  if (halves.length === 1) return head.length === 8 ? head : null;
+  const rest = toGroups(halves[1]!);
+  if (!rest || head.length + rest.length > 7) return null;
+  return [...head, ...Array<number>(8 - head.length - rest.length).fill(0), ...rest];
+}
+
+function blockedV4([a, b]: [number, number, number, number]): boolean {
+  // This machine (127/8, 0/8), link-local (169.254/16: cloud metadata), multicast and the reserved/broadcast block (224/3).
+  return a === 127 || a === 0 || (a === 169 && b === 254) || a >= 224;
+}
+
+/**
+ * Loopback, link-local (cloud metadata), unspecified, multicast. Private LAN ranges are allowed: an encoder's own HLS
+ * output, a switch or a mail server lives there. An IPv6 address that only WRAPS an IPv4 one is judged by what it wraps:
+ * `::ffff:127.0.0.1` (mapped), `::7f00:1` (the compatible form `new URL("http://[::127.0.0.1]")` writes), `64:ff9b::7f00:1`
+ * (NAT64) and `2002:7f00:1::` (6to4). Not an address at all: false (the caller judges names separately).
+ */
 export function blockedAddress(ip: string): boolean {
-  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(ip);
-  if (v4) {
-    const a = Number(v4[1]);
-    const b = Number(v4[2]);
-    return a === 127 || a === 0 || (a === 169 && b === 254);
-  }
-  const v6 = ip.toLowerCase();
-  if (v6 === "::1" || v6 === "::") return true;
-  if (/^fe[89ab][0-9a-f]:/.test(v6)) return true;
-  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(v6);
-  if (mapped) return blockedAddress(mapped[1]!);
-  // The same in hex, as `new URL` writes it: [::ffff:127.0.0.1] becomes ::ffff:7f00:1.
-  const hex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(v6);
-  if (hex) {
-    const hi = parseInt(hex[1]!, 16);
-    const lo = parseInt(hex[2]!, 16);
-    return blockedAddress(`${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`);
-  }
+  const text = ip.trim().replace(/^\[|\]$/g, "").toLowerCase();
+  const v4 = parseIPv4(text);
+  if (v4) return blockedV4(v4);
+  const g = parseIPv6(text);
+  if (!g) return false;
+  const [g0, g1, g2, g3, g4, g5, g6, g7] = g as [number, number, number, number, number, number, number, number];
+  const embedded = (hi: number, lo: number): boolean => blockedV4([hi >> 8, hi & 255, lo >> 8, lo & 255]);
+  if (g.every((x) => x === 0)) return true; // ::
+  if (g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0 && g4 === 0 && (g5 === 0xffff || g5 === 0)) return embedded(g6, g7); // ::ffff:a.b.c.d and ::a.b.c.d (so ::1 reads as 0.0.0.1: refused)
+  if (g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0 && g4 === 0xffff && g5 === 0) return embedded(g6, g7); // ::ffff:0:a.b.c.d (SIIT)
+  if (g0 === 0x64 && g1 === 0xff9b) return g2 === 0 && g3 === 0 && g4 === 0 && g5 === 0 ? embedded(g6, g7) : true; // NAT64 (64:ff9b::/96); the local-use /48 is refused outright
+  if (g0 === 0x2002) return embedded(g1, g2); // 6to4 carries the IPv4 address in bits 16-47
+  if (g0 === 0x2001 && g1 === 0) return true; // Teredo
+  if ((g0 & 0xffc0) === 0xfe80) return true; // link-local fe80::/10
+  if ((g0 & 0xff00) === 0xff00) return true; // multicast
+  if (g0 === 0xfd00 && g1 === 0x0ec2) return true; // AWS's IPv6 metadata range (fd00:ec2::/32)
   return false;
 }
 

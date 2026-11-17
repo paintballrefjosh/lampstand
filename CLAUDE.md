@@ -422,7 +422,7 @@ site-wide destinations: ntfy, Pushover, Slack, Teams (Workflows webhook), Discor
 over `<timestamp>.<body>`) and Twilio SMS. `events` is `outages` (`OUTAGE_ALERT_KINDS`, each kind with its recovery) or `everything`
 (also `OTHER_ALERT_KINDS`). The token or webhook URL is `secret` (encrypted `enc:v1:`, never returned: `hasSecret`). **Every request
 is built by the pure `buildAlertRequests`; destinations go through `alertDestinationProblem`** (Slack/Discord/Teams only to their own
-hosts over https; never credentials in the URL; never link-local, also after DNS resolution), no redirects, 10 s timeout. A failure is
+hosts over https; never credentials in the URL; never this machine, link-local or a container of this stack, checked on the address the socket connects to), no redirects, 10 s timeout. The reply's words go on the channel (`last_error`) only for the hosted services, never for ntfy or a webhook (their reply is whatever sits at an address the admin typed). A failure is
 recorded on the channel (`last_error`), never retried per channel. (2) *The outbox* (`alert_outbox`, `skip` in the backup registry): the
 **probe worker no longer writes bell rows**: `notifyAll` queues a `fanout` row and the API's `alert-dispatch` cluster job (5 s) tells the
 monitoring recipients through `NotificationsService.createMany` (so email, push, quiet hours and urgent kinds apply; until 2026-10-25 a
@@ -1830,6 +1830,21 @@ is typed, so a mixed-case row could never be matched.
   permission authorises its category (`SETTING_CATEGORY_MANAGE_PERMISSION`) and the module page links to it for admins only. Done: Signage, Printers, ProPresenter,
   Livestreams, Planning Center (its people links are `/planning-center/links`), Help Desk (`/tickets/settings`: SLA targets and the mailbox; `/tickets/categories`), Wiki (`/wiki/settings`), Assistant (`/assistant/settings`, `/assistant/usage`), Checklists (the admin pages are `/checklists/manage/*`, a tab row), Monitoring (`/monitoring/settings` for checks, retention and alerts; `/monitoring/network/settings` UniFi, `/dns/settings`, `/ipam/settings`, `/monitoring/ups/settings`). **Do not add a module to `admin/settings/categories.ts` or the Admin menu**; Admin (hub, menu and settings list) is for site admins and site-wide settings only (site, auth, Google, Microsoft, SMTP, backups, attachments, home page defaults, retention, push, monthly report). Never pass a lucide icon into a client component (a server page does that): keep the page shell server-rendered. Old `/admin/...` addresses
   redirect in `next.config.mjs`.
+- **Outbound connections to an address an admin typed go through ONE guard** (reviewed 2026-11-15; before it, three hand-written checks had drifted apart
+  and ProPresenter's host was pasted into a URL unchecked, so `api:3001/api/v1/readyz#` as the host would have made the dashboard fetch its own API).
+  Pure rules in `packages/shared/src/contact-host.ts` (`contactHostProblem`, `contactUrlProblem`, `STACK_HOST_NAMES`; `blockedAddress` in
+  `schemas/livestream.ts` parses IPv6 properly and unwraps mapped, IPv4-compatible, NAT64 and 6to4 forms) refuse this machine, link-local
+  (cloud metadata), multicast and the stack's own containers, and are used at SAVE time (`validateSettingValue` for `propresenter.host`,
+  `unifi.controller_url`, `dns.primary_url`, the mailbox host, alert destinations, livestream links). **The API connects only through
+  `apps/api/src/net/outbound.ts`** (`outboundFetch`, `outboundAgent`, `assertOutboundHost`): its socket `lookup` judges the address it is really
+  connecting to (no check-then-resolve-again gap, so DNS rebinding does not work), redirects are followed for a GET only (3 hops, each host
+  checked) and never for anything else. A NEW connector that takes a host or URL from settings or a form uses it and gets a case in
+  `validateSettingValue`; never `fetch(`${host}...`)`, and never build a URL by pasting a typed host into a string (`propresenterUrl` allows
+  letters, digits, dots and dashes only). `allowShortNames` keeps `pp7-mac`-style one-word LAN names working for the connectors that always
+  accepted them; the stack's container names stay refused by name. A fake device in a test must listen on `lanAddress()` (`test/lan-address.ts`),
+  not 127.0.0.1. **Known gap:** yt-dlp and ffmpeg (livestreams) resolve and follow redirects themselves, so they get the pre-check
+  (`assertFetchableHost`) but not the pinned connection; a Livestreams moderator could still reach a host through a redirect (blind, no
+  response). Tests: `outbound.test.ts`, `contact-host.test.ts`, `alert-channels.test.ts`, smoke `alert-channels.mjs`.
 - **No emoji in code.** Per repo conventions.
 
 ## Common commands

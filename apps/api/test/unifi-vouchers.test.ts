@@ -3,6 +3,7 @@ import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createUnifiVouchersSchema, describeVoucherMinutes } from "@lampstand/shared";
 import { UnifiService, toVoucher } from "../src/unifi/unifi.service";
+import { lanAddress } from "./lan-address";
 
 /** A fake self-hosted controller: the UniFi OS path (/proxy/network/...) answers 404, so the service falls back to /api/. */
 describe("UniFi guest vouchers", () => {
@@ -37,8 +38,9 @@ describe("UniFi guest vouchers", () => {
         res.writeHead(400).end();
       });
     });
-    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
-    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const lan = lanAddress();
+    await new Promise<void>((r) => server.listen(0, lan, r));
+    base = `http://${lan}:${(server.address() as AddressInfo).port}`;
   });
   afterAll(() => new Promise<void>((r) => server.close(() => r())));
 

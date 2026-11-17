@@ -90,6 +90,11 @@ export class PlanningCenterService {
   private async apiGet(path: string): Promise<JsonApiResponse> {
     const cfg = await this.config();
     if (!cfg) throw new ServiceUnavailableException("Planning Center is not configured");
+    // A `links.next` from a reply is an absolute address; only Planning Center's own is followed, because the request
+    // carries the app id and secret.
+    if (/^https?:/i.test(path) && !path.startsWith(`${PlanningCenterService.BASE}/`)) {
+      throw new ServiceUnavailableException("Planning Center sent a link to another site; it was not followed");
+    }
     const url = path.startsWith("http") ? path : `${PlanningCenterService.BASE}${path}`;
     const auth = `Basic ${Buffer.from(`${cfg.appId}:${cfg.secret}`).toString("base64")}`;
     const controller = new AbortController();

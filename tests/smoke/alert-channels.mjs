@@ -18,6 +18,11 @@ export async function alertChannelTests({ test, assert, fetchWithCookies, jar })
         ...json({ name: "[smoke] metadata", type: "webhook", config: { url: "http://169.254.169.254/latest/meta-data" } }),
       });
       assert(meta.res.status === 400, `link-local: ${meta.res.status}`);
+      // The reply's first words are kept on the channel and shown to its admin, so a channel must never point inward.
+      for (const url of ["http://127.0.0.1:3001/api/v1/readyz", "http://localhost:3001/", "http://api:3001/api/v1/readyz", "http://[::ffff:7f00:1]:3001/"]) {
+        const inward = await session("/api/v1/alert-channels", { method: "POST", ...json({ name: "[smoke] inward", type: "webhook", config: { url } }) });
+        assert(inward.res.status === 400, `${url}: ${inward.res.status}`);
+      }
       const slack = await session("/api/v1/alert-channels", {
         method: "POST",
         ...json({ name: "[smoke] fake slack", type: "slack", secret: "https://evil.example.org/hooks.slack.com/x" }),
@@ -29,7 +34,7 @@ export async function alertChannelTests({ test, assert, fetchWithCookies, jar })
     await test("alert channels: a channel is saved with its secret hidden, and names are unique", async () => {
       const { res } = await session("/api/v1/alert-channels", {
         method: "POST",
-        ...json({ name: "[smoke] dead hook", type: "webhook", events: "outages", config: { url: "http://127.0.0.1:9/hook" }, secret: "smoke-signing-secret" }),
+        ...json({ name: "[smoke] dead hook", type: "webhook", events: "outages", config: { url: "http://dead-hook.invalid:9/hook" }, secret: "smoke-signing-secret" }),
       });
       const text = await res.text();
       assert(res.status === 201 || res.status === 200, `create ${res.status}: ${text}`);
@@ -38,7 +43,7 @@ export async function alertChannelTests({ test, assert, fetchWithCookies, jar })
       assert(ch.hasSecret === true && !("secret" in ch) && !text.includes("smoke-signing-secret"), `secret leaked: ${text}`);
       const again = await session("/api/v1/alert-channels", {
         method: "POST",
-        ...json({ name: "[smoke] dead hook", type: "webhook", config: { url: "http://127.0.0.1:9/hook" } }),
+        ...json({ name: "[smoke] dead hook", type: "webhook", config: { url: "http://dead-hook.invalid:9/hook" } }),
       });
       assert(again.res.status === 409, `duplicate name: ${again.res.status}`);
       const list = await (await session("/api/v1/alert-channels")).res.json();
@@ -47,7 +52,7 @@ export async function alertChannelTests({ test, assert, fetchWithCookies, jar })
 
     await test("alert channels: a failing test send says why and is recorded on the channel", async () => {
       const { res } = await session(`/api/v1/alert-channels/${ch.id}/test`, { method: "POST" });
-      assert(res.status === 400, `test send to a closed port: ${res.status}`);
+      assert(res.status === 400, `test send to a host that does not exist: ${res.status}`);
       const after = await (await session(`/api/v1/alert-channels/${ch.id}`)).res.json();
       assert(after.lastError && after.lastErrorAt, `lastError: ${JSON.stringify(after)}`);
     });
