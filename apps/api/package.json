@@ -14,7 +14,7 @@
     "db:seed": "node dist/scripts/seed.js"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "0.133.0",
+    "@anthropic-ai/sdk": "0.137.0",
     "@auth/core": "0.41.3",
     "@fastify/cookie": "11.1.5",
     "@fastify/multipart": "9.4.0",
@@ -26,9 +26,9 @@
     "@nestjs/platform-fastify": "11.2.7",
     "@nestjs/platform-socket.io": "11.2.7",
     "@nestjs/websockets": "11.2.7",
-    "argon2": "0.45.1",
+    "argon2": "0.45.2",
     "drizzle-orm": "0.45.4",
-    "fastify": "5.12.7",
+    "fastify": "5.12.8",
     "imapflow": "2.10.0",
     "mailparser": "3.14.1",
     "mammoth": "1.13.0",
