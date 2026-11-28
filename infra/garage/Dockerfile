@@ -3,5 +3,5 @@
 # The config and scripts are bind-mounted (see the compose files), not baked in, so
 # changing them needs no rebuild.
 FROM dxflrs/garage:v2.5.0 AS garage
-FROM alpine:3.20
+FROM alpine:3.24
 COPY --from=garage /garage /usr/local/bin/garage
