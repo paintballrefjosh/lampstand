@@ -53,7 +53,7 @@ export function MetricChart({
       <div style={{ height }}>
         {mounted && hasData ? (
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={data} margin={{ top: 4, right: 8, bottom: 0, left: -10 }}>
+            <LineChart data={data} margin={{ top: 4, right: 8, bottom: 0, left: -10 }} accessibilityLayer={false}>
               <CartesianGrid stroke="#64748b" strokeOpacity={0.15} vertical={false} />
               <XAxis
                 dataKey="t"
@@ -81,7 +81,7 @@ export function MetricChart({
                   color: "#e2e8f0",
                 }}
                 labelFormatter={(t) => new Date(Number(t)).toLocaleString()}
-                formatter={(v: number) => [`${round(v)}${unit}`, title]}
+                formatter={(v) => [`${round(typeof v === "number" ? v : null)}${unit}`, title]}
               />
               <Line
                 type="monotone"
@@ -143,6 +143,8 @@ export function MultiSeriesChart({
     return row;
   });
   const hasData = data.some((d) => series.some((s) => d[s.name] !== null && d[s.name] !== undefined));
+  // Legend and tooltip list the series in the order given (Recharts would otherwise sort them by name).
+  const seriesOrder = (name: string) => series.findIndex((s) => s.name === name);
 
   return (
     <div className="rounded-md border border-slate-300 p-3 dark:border-slate-800">
@@ -152,7 +154,7 @@ export function MultiSeriesChart({
       <div style={{ height }}>
         {mounted && hasData ? (
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={data} margin={{ top: 4, right: 8, bottom: 0, left: -10 }}>
+            <LineChart data={data} margin={{ top: 4, right: 8, bottom: 0, left: -10 }} accessibilityLayer={false}>
               <CartesianGrid stroke="#64748b" strokeOpacity={0.15} vertical={false} />
               <XAxis
                 dataKey="t"
@@ -180,9 +182,14 @@ export function MultiSeriesChart({
                   color: "#e2e8f0",
                 }}
                 labelFormatter={(t) => new Date(Number(t)).toLocaleString()}
-                formatter={(v: number, name: string) => [format(v), name]}
+                formatter={(v, name) => [typeof v === "number" ? format(v) : "—", name]}
+                itemSorter={(item) => seriesOrder(String(item.name))}
               />
-              <Legend wrapperStyle={{ fontSize: 11 }} iconType="plainline" />
+              <Legend
+                wrapperStyle={{ fontSize: 11 }}
+                iconType="plainline"
+                itemSorter={(item) => seriesOrder(String(item.value))}
+              />
               {series.map((s) => (
                 <Line
                   key={s.name}
