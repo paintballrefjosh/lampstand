@@ -51,8 +51,7 @@ export function offsiteObjectKey(prefix: string, createdAt: Date, backupId: stri
   return `${prefix}${offsiteObjectName(createdAt, backupId)}`;
 }
 
-/** Copies made before the rename to Lampstand (2026-11-08) are named `church-dashboard-...`: still ours, still counted and pruned. */
-const NAME_RE = /^(?:lampstand|church-dashboard)-(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z-[0-9a-f]{8}\.tar\.gz$/;
+const NAME_RE = /^lampstand-(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z-[0-9a-f]{8}\.tar\.gz$/;
 
 /** Whether a key in the folder is one of ours (and not something else somebody keeps there). */
 export function isOffsiteArchiveKey(prefix: string, key: string): boolean {
@@ -74,7 +73,7 @@ export function offsiteKeyTime(prefix: string, key: string): Date | null {
  */
 export function offsiteKeysToDelete(prefix: string, keys: string[], keep: number): string[] {
   if (!Number.isFinite(keep) || keep <= 0) return [];
-  // Oldest first by the time in the name (the two prefixes do not sort together as text).
+  // Oldest first by the time in the name.
   const stamp = (k: string): number => offsiteKeyTime(prefix, k)?.getTime() ?? 0;
   const ours = keys.filter((k) => isOffsiteArchiveKey(prefix, k)).sort((a, b) => stamp(a) - stamp(b) || (a < b ? -1 : a > b ? 1 : 0));
   return ours.length <= keep ? [] : ours.slice(0, ours.length - keep);

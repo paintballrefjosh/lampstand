@@ -9,7 +9,6 @@ import {
   parseSudoProbe,
   scrubSecret,
   sudoProbeScript,
-  legacySudoersFilesFor,
   sudoersFileFor,
   sudoersSetupScript,
   validSudoUser,
@@ -189,15 +188,6 @@ maybe("sudoersSetupScript", () => {
     expect(res?.message).toContain("(fake) what sudo says applies");
     expect(existsSync(sudoersFileFor("lampstandmon", dir))).toBe(false);
     expect(existsSync(`${sudoersFileFor("lampstandmon", dir)}~`)).toBe(false);
-  });
-
-  it("replaces the file names earlier versions used", () => {
-    const legacy = legacySudoersFilesFor("lampstandmon", dir);
-    expect(legacy.map((f) => f.slice(dir.length + 1))).toEqual(["90-church-dashboard-lampstandmon", "zz-church-dashboard-lampstandmon"]);
-    for (const f of legacy) writeFileSync(f, "lampstandmon ALL=(ALL) NOPASSWD: ALL\n");
-    run(script("lampstandmon"), "password", "secret\n");
-    for (const f of legacy) expect(existsSync(f)).toBe(false);
-    expect(existsSync(sudoersFileFor("lampstandmon", dir))).toBe(true);
   });
 
   it("refuses a host whose sudoers does not read the directory", () => {

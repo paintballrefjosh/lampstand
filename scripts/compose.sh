@@ -118,13 +118,7 @@ AUTH_SECRET_VALUE="${AUTH_SECRET:-$(env_get AUTH_SECRET)}"
 # form (the bundled cluster database's password); `derive <name>` is the Garage namespace, whose
 # strings must never change (they are the live access key). Garage only accepts its own key
 # format: GK + 24 hex characters, and a 64-hex secret.
-#
-# The namespace the strings are mixed with is DERIVE_PREFIX. New installs have `DERIVE_PREFIX=lampstand` written to
-# .env by install.sh. An install made before the rename to Lampstand (2026-11-08) has no such line and keeps
-# `church-dashboard`, because the database password and Garage's key were created from it and are stored: changing
-# the prefix on a running install would lock the app out of both. Do not add the line to an existing install.
-DERIVE_PREFIX_VALUE="${DERIVE_PREFIX:-$(env_get DERIVE_PREFIX)}"; DERIVE_PREFIX_VALUE="${DERIVE_PREFIX_VALUE:-church-dashboard}"
-derive_ns() { [[ -n "$AUTH_SECRET_VALUE" ]] && printf '%s' "$DERIVE_PREFIX_VALUE/$1/v1:$AUTH_SECRET_VALUE" | sha256_hex || true; }
+derive_ns() { [[ -n "$AUTH_SECRET_VALUE" ]] && printf '%s' "lampstand/$1/v1:$AUTH_SECRET_VALUE" | sha256_hex || true; }
 derive() { derive_ns "garage/$1"; }
 
 DB_MODE="${DB_MODE:-$(env_get DB_MODE)}"

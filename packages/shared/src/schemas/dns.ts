@@ -71,15 +71,9 @@ export type DnsEditableType = (typeof DNS_EDITABLE_TYPES)[number];
  * claim it.
  */
 export const DNS_MANAGED_MARKER = "managed-by:lampstand";
-/**
- * The comment the sync wrote before the rename to Lampstand (2026-11-08). Records that carry it are still ours; the sync
- * rewrites them with `DNS_MANAGED_MARKER` the next time it runs (`computeSyncPlan`), so this goes unused once they all have.
- */
-export const LEGACY_DNS_MANAGED_MARKER = "managed-by:church-dashboard";
-
-/** Does this record comment mark a record the sync owns (new or pre-rename marker)? */
+/** Does this record comment mark a record the sync owns? */
 export function hasManagedMarker(comments: string | null | undefined): boolean {
-  return Boolean(comments && (comments.includes(DNS_MANAGED_MARKER) || comments.includes(LEGACY_DNS_MANAGED_MARKER)));
+  return Boolean(comments?.includes(DNS_MANAGED_MARKER));
 }
 
 // A domain name (absolute or relative, optional trailing dot, `_` allowed for

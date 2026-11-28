@@ -6,7 +6,7 @@ import { isUrgentNotificationKind, pushPayloadFor, type PushPayload, type PushSu
 import { DB, type Db } from "../db/db.module";
 import { pushSubscriptions } from "../db/schema";
 import { SettingsService } from "../settings/settings.service";
-import { deriveLegacyVapidKeys, deriveVapidKeys, type VapidKeys } from "./vapid";
+import { deriveVapidKeys, type VapidKeys } from "./vapid";
 
 export interface PushTarget {
   endpoint: string;
@@ -31,31 +31,6 @@ const realSender: PushSender = async (target, payload, options) => {
     timeout: 10_000,
   });
 };
-
-/**
- * Sends with the site's key; if the push service answers 401/403 (the signing key is not the one the browser subscribed
- * with: a subscription made before the rename to Lampstand), tries the old key pair once, and reports the first failure
- * if that fails too.
- */
-export async function sendWithLegacyFallback(
-  sender: PushSender,
-  target: PushTarget,
-  body: string,
-  options: PushSendOptions,
-  legacyKeys: () => VapidKeys,
-): Promise<void> {
-  try {
-    await sender(target, body, options);
-  } catch (first) {
-    const code = (first as { statusCode?: number }).statusCode;
-    if (code !== 401 && code !== 403) throw first;
-    try {
-      await sender(target, body, { ...options, keys: legacyKeys() });
-    } catch {
-      throw first;
-    }
-  }
-}
 
 /**
  * A short fingerprint of a subscription's address. The browser computes the same for its own subscription, so the device
@@ -100,13 +75,6 @@ export class PushService {
   /** For tests: replace the thing that talks to the push services. */
   useSender(sender: PushSender): void {
     this.sender = sender;
-  }
-
-  private legacyVapid: VapidKeys | null = null;
-
-  private legacyKeys(): VapidKeys {
-    if (!this.legacyVapid) this.legacyVapid = deriveLegacyVapidKeys(process.env.AUTH_SECRET ?? "");
-    return this.legacyVapid;
   }
 
   private keys(): VapidKeys {
@@ -198,7 +166,7 @@ export class PushService {
         subs.map(async (s) => {
           try {
             const target: PushTarget = { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } };
-            await sendWithLegacyFallback(this.sender, target, body, options, () => this.legacyKeys());
+            await this.sender(target, body, options);
             out.sent++;
             await this.db.update(pushSubscriptions).set({ lastSentAt: new Date(), lastError: null }).where(eq(pushSubscriptions.id, s.id));
           } catch (err) {

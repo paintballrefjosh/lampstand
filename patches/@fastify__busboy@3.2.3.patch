@@ -16,7 +16,7 @@ diff --git a/types/index.d.ts b/types/index.d.ts
 -    removeListener(event: 'limit', listener: () => void): this;
 -  }
 -}
-+// (church-dashboard patch) The augmentation of stream.Readable with a 'limit' event is removed: it hid
++// (lampstand patch) The augmentation of stream.Readable with a 'limit' event is removed: it hid
 +// Readable's normal on()/once() overloads from TypeScript across the whole program (multipart file streams
 +// still emit 'limit'; nothing here listens for it).
  export { Dicer } from '../deps/dicer/lib/dicer'

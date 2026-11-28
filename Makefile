@@ -37,7 +37,6 @@ init-env:
 	    SECRET=$$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n'); \
 	  fi; \
 	  sed -i "s|AUTH_SECRET=replace-me-with-openssl-rand-hex-32|AUTH_SECRET=$$SECRET|" .env; \
-	  sed -i "s|^# DERIVE_PREFIX=lampstand|DERIVE_PREFIX=lampstand|" .env; \
 	  echo "Created .env with a generated AUTH_SECRET. Review the file before going to production."; \
 	else \
 	  echo ".env already exists — leaving it alone."; \

@@ -4,28 +4,17 @@ Context file for Claude (or any AI assistant) working on this repo. Keep this cu
 
 ## What this project is
 
-**Lampstand** (renamed 2026-11-08 from "Church Dashboard"; the name's meaning is the first thing in the README). A web-based dashboard for a single church. Modular tile dashboard, helpdesk
+**Lampstand** (the name's meaning is the first thing in the README). A web-based dashboard for a single church. Modular tile dashboard, helpdesk
 (tickets + SLAs), wiki, notes, monitoring + incidents, printer (SNMP) status,
 UniFi network views, ProPresenter control, Planning Center, volunteer checklists,
 tags, @mentions, activity feed, full-text search, a notification centre, and
 admin. Self-hosted via Docker Compose behind an upstream HTTPS load balancer.
 
-**Naming (renamed from "Church Dashboard" on 2026-11-08).** Everything is called `lampstand`: the repo, the `@lampstand/*` workspace scope, the compose
-projects (`lampstand`, `lampstand-prod`) and images (`lampstand-<service>`), the database and its user, the default bucket (`lampstand-files`), the
-cookies and headers (`lampstand_rv`, `lampstand_home_look`, `X-Lampstand-Node`, `X-Lampstand-Signature`). **Five places still read an old
-`church-dashboard` string, on purpose, because data written before the rename carries it** (each is a named LEGACY constant with a test; new data
-never uses it):
-(1) saved secrets (`settings/crypto.ts`: `decryptSecret` tries the new salt, then `LEGACY_SALT`; a value is rewritten under the new salt the next
-time it is saved, there is no bulk re-encryption, so the legacy salt can only go once every row has been saved again); (2) web push (`vapid.ts`
-`deriveLegacyVapidKeys`; `PushService.send` retries a 401/403 with the old key pair, which is what a subscription made before the rename needs);
-(3) backups: `LEGACY_ARCHIVE_FORMAT` is still accepted by the reader, `acceptedSecretFingerprints()` accepts the old fingerprint, and offsite copies
-named `church-dashboard-<time>-<id>.tar.gz` are still recognised and pruned, ordered by the time in the name; (4) DNS records the sync made carry
-`managed-by:church-dashboard` (`LEGACY_DNS_MANAGED_MARKER`, `hasManagedMarker`): still owned, and `computeSyncPlan` rewrites the comment with an
-update ("Marker renamed") on the next run; (5) the sudoers files `90-` and `zz-church-dashboard-<login>` (`legacySudoersFilesFor`) are removed when
-passwordless sudo is set up again. **`DERIVE_PREFIX`** (`.env`, read by `scripts/compose.sh`) is the namespace the bundled database password and Garage's
-key are derived with: new installs get `lampstand` (installer, `make init-env`); an install without the line keeps `church-dashboard`, **never add the
-line to a running install** (the stored password and key were made from the old one). Sample text and prose that say "church" (example domains,
-"Church Apps", "a church") are about the organisation, not the product. The GitHub repo is `paintballrefjosh/lampstand`.
+**Naming.** Everything is called `lampstand`: the repo, the `@lampstand/*` workspace scope, the compose projects (`lampstand`, `lampstand-prod`) and
+images (`lampstand-<service>`), the database and its user, the default bucket (`lampstand-files`), the cookies and headers (`lampstand_rv`,
+`lampstand_home_look`, `X-Lampstand-Node`, `X-Lampstand-Signature`), and the key-derivation strings. **There is no compatibility with any earlier
+product name** (decided 2026-11-27: assume no installation predates the name), so do not add legacy fallbacks for one. Sample text and prose that
+say "church" (example domains, "Church Apps", "a church") are about the organisation, not the product. The GitHub repo is `paintballrefjosh/lampstand`.
 
 **Tenancy:** single church only. Do **not** add `tenant_id` columns or multi-tenant
 abstractions. If multi-tenancy is ever needed it will be a separate, explicit phase.
@@ -1722,15 +1711,6 @@ image in a one-off container -> swap only `api web monitor` (`up -d --no-build -
 only when `infra/` changed; in a cluster `cluster.sh drain` before and `undrain` after the node is healthy) -> verify
 inside the containers (`/readyz`, web answering, `BUILD_ID` of api and web equals `scripts/build-id.sh`) -> otherwise
 roll back by itself. A failed build or migration puts the code back before anything was swapped. Rules:
-- **A version can change the compose project name** (the Lampstand rename: `church-prod` -> `lampstand-prod`; compose only knows the checked-out
-  version's project, so the others are found by LABEL). `upgrade.sh` compares the running containers' project (`RUN_OLD`: the old name too when the checkout is
-  already on the new version) with the target's `name:`, and when they differ (a `COMPOSE_PROJECT_NAME` in `.env` or the environment means they do not) it
-  `retire_project`s the old containers (stop, rm, networks; never volumes or `./data`) right before a FULL `up -d`, and the unhealthy path retires the new
-  project and restores the old one from the images still on the node (`restore_old`: no rebuild while the site is down). `ensure_local_images` gives the
-  services built from this repo besides api/web/monitor (Garage) their image under the new name: a retag of the old one, else a build. **A bundled database
-  is refused** (it would have to change project): stop before touching anything and point at INSTALL.md. Before this (found 2026-11-12 on a 3-node cluster)
-  the swap failed on `No such image: lampstand-prod-garage` and, with the image present, would have started a second stack beside the old one on the same
-  port and Garage metadata. Tests: `tests/upgrade/upgrade.sh` "the new version renames the compose project".
 - **Do not skip rebuilding a service because its sources did not change.** `BUILD_ID` is baked into every image and every
   node of a cluster must run the same build; Docker's layer cache already makes the unchanged parts cheap.
 - **Build once, pull everywhere (`IMAGE_REGISTRY`, 2026-10-24)**: with `IMAGE_REGISTRY=<prefix>` (`.env` or environment; the prefix

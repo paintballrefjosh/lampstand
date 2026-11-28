@@ -1206,38 +1206,6 @@ carries on. Nodes that only hold the database and object store (`NODE_ROLE=data`
 `--drain-wait`, `--no-prune`, `--settle <sec>` (pause between nodes, default 10) and `--to <ref>` work as described
 above.
 
-### An install made before the rename to Lampstand (2026-11-08)
-
-The product was called "Church Dashboard" and its internal names were `church`. Nothing stored changes by itself, but a few names the
-code used to assume now say `lampstand`, so an existing install needs these once, **before** the first upgrade to a release that has the
-rename (stop the app first; a node still running the old code would lose the database):
-
-- **Bundled CockroachDB, secure cluster (`DEPLOY_MODE=cluster`):** the database and the app's user are named in the code. Rename them:
-  `scripts/cluster.sh sql -e "ALTER DATABASE church RENAME TO lampstand; ALTER USER church RENAME TO lampstand;"`. The password does not
-  change. **Do not add `DERIVE_PREFIX` to `.env`**: the password and Garage's key were made from the old namespace, and no line means the code
-  keeps using it.
-- **Bundled CockroachDB, one node:** `DATABASE_URL`/`COCKROACH_URL` in `.env` names the database, so nothing is needed; to rename it too,
-  `ALTER DATABASE church RENAME TO lampstand` and edit that line.
-- **Your own database (`DB_MODE=external`):** nothing. The URL in `.env` is the whole story.
-- **Compose project and images:** the project is now `lampstand` (`lampstand-prod` for production), and the bundled Garage image is
-  `lampstand-prod-garage`. **`scripts/upgrade.sh` and `upgrade-cluster.sh` handle this** (with the script from the release that has the
-  rename, which a cluster upgrade uses on every node): the node's old `church-prod` containers are stopped just before the new ones start
-  (a short interruption, after the drain in a cluster), the Garage image is reused from the old name or built, and an unhealthy new
-  version puts the old project back from the images still on the node. Volumes and `./data` are never touched, and the old images stay
-  for `--rollback`. **A bundled database cannot move between projects this way**: the upgrade says so and stops before changing anything,
-  and for that case `docker compose down` the old project by hand (`COMPOSE_PROJECT_NAME=church-prod scripts/compose.sh --prod down`, or
-  `church` for the dev stack) before the first start of the new one. A `COMPOSE_PROJECT_NAME` set in `.env` is kept as it is, so a node
-  that sets it keeps its old container names and nothing moves.
-- **Registry tags:** images are `<prefix>-api|web|monitor`; use a registry prefix ending in `lampstand` for new releases.
-- **Bucket:** a `MINIO_BUCKET`/`S3_BUCKET` in `.env` is kept (the default for new installs is `lampstand-files`). Offsite backup copies named
-  `church-dashboard-<time>-<id>.tar.gz` are still found, counted and pruned.
-- **Checkout folder on other nodes:** `scripts/upgrade-cluster.sh` and the installer now default to `~/lampstand`; a node whose checkout is
-  still `~/church-dashboard` needs a line for it in `data/upgrade/nodes`.
-- **Browsers:** push notifications made before the rename keep working. The `church_rv` and `church_home_look` cookies and the
-  `church.portView` setting are new names, so each person's "use this look on this device" choice and list/picture view are asked again once.
-- **Webhook receivers:** the alert webhook headers are now `X-Lampstand-Signature`, `X-Lampstand-Timestamp` and `X-Lampstand-Event`;
-  change a receiver that checks the old names.
-
 ## Where settings live
 
 Settings are rows in the database, edited in the browser. A **site administrator** (the `admin` group) can change all of them.

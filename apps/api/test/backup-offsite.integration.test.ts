@@ -331,7 +331,7 @@ describe.skipIf(!url)("offsite copies against a real database", () => {
     expect(imported[0]?.data.equals(body(7))).toBe(true);
 
     await expect(service.fetch({ id: "u1" }, "church/notes.txt")).rejects.toThrow(/not a backup copy/);
-    await expect(service.fetch({ id: "u1" }, "other/church-dashboard-20260901T000000Z-aaaaaaaa.tar.gz")).rejects.toThrow(/not a backup copy/);
+    await expect(service.fetch({ id: "u1" }, "other/lampstand-20260901T000000Z-aaaaaaaa.tar.gz")).rejects.toThrow(/not a backup copy/);
     await expect(service.fetch({ id: "u1" }, offsiteObjectKey("church/", new Date("2020-01-01T00:00:00Z"), "aaaaaaaa-0000-4000-8000-000000000000"))).rejects.toThrow(/no longer in the bucket/);
   });
 
