@@ -1,8 +1,9 @@
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { OutboundBlockedError, assertOutboundHost, guardedLookup, outboundBlockedMessage, outboundFetch } from "../src/net/outbound";
+import { OutboundBlockedError, assertOutboundHost, guardedLookup, headersForRedirect, outboundBlockedMessage, outboundFetch } from "../src/net/outbound";
 import { propresenterUrl } from "../src/propresenter/propresenter.service";
+import { lanAddress } from "./lan-address";
 
 describe("guardedLookup", () => {
   const lookupOf = (host: string, all = false) =>
@@ -88,6 +89,64 @@ describe("outboundFetch", () => {
     const err = await outboundFetch("http://127.0.0.1:1/").catch((e: unknown) => e);
     expect(outboundBlockedMessage(err)).toMatch(/may contact/);
     expect(outboundBlockedMessage(new Error("boom"))).toBeNull();
+  });
+});
+
+describe("headers across a redirect", () => {
+  const sent = { accept: "application/json", authorization: "Bearer secret", "X-API-Key": "secret", cookie: "a=1" };
+  const names = (from: string, to: string) => [...headersForRedirect(new URL(from), new URL(to), sent).keys()].sort();
+  const every = ["accept", "authorization", "cookie", "x-api-key"];
+
+  it("keeps them on the same origin and on a plain move to https", () => {
+    expect(names("http://nas.lan:5380/a", "http://nas.lan:5380/b")).toEqual(every);
+    expect(names("http://nas.lan/a", "https://nas.lan/a")).toEqual(every);
+  });
+
+  it("keeps only harmless ones for another host, port or a step down to http", () => {
+    for (const [from, to] of [
+      ["https://nas.lan/a", "https://other.lan/a"],
+      ["http://nas.lan:5380/a", "http://nas.lan:8080/a"],
+      ["https://nas.lan/a", "http://nas.lan/a"],
+      ["http://nas.lan:5380/a", "https://nas.lan/a"],
+      ["http://nas.lan/a", "https://other.lan/a"],
+    ] as const) {
+      expect(names(from, to), `${from} -> ${to}`).toEqual(["accept"]);
+    }
+  });
+
+  it("does not send a key to the server redirected to, nor give it back on the way home", async () => {
+    const seen: Array<{ at: string; key: string | undefined; auth: string | undefined }> = [];
+    const host = lanAddress();
+    const urls: Record<"first" | "second", string> = { first: "", second: "" };
+    const serve = (name: "first" | "second") =>
+      createServer((req, res) => {
+        seen.push({ at: `${name}${req.url}`, key: req.headers["x-api-key"] as string | undefined, auth: req.headers.authorization });
+        const next: Record<string, string> = {
+          "first/start": "/same",
+          "first/same": `${urls.second}/away`,
+          "second/away": `${urls.first}/home`,
+        };
+        const location = next[`${name}${req.url}`];
+        res.writeHead(location ? 302 : 200, location ? { location } : {});
+        res.end();
+      });
+    const servers = { first: serve("first"), second: serve("second") };
+    try {
+      for (const name of ["first", "second"] as const) {
+        await new Promise<void>((r) => servers[name].listen(0, host, r));
+        urls[name] = `http://${host}:${(servers[name].address() as AddressInfo).port}`;
+      }
+      const res = await outboundFetch(`${urls.first}/start`, { headers: { "X-API-Key": "k", authorization: "Bearer t" } });
+      expect(res.status).toBe(200);
+      expect(seen).toEqual([
+        { at: "first/start", key: "k", auth: "Bearer t" },
+        { at: "first/same", key: "k", auth: "Bearer t" },
+        { at: "second/away", key: undefined, auth: undefined },
+        { at: "first/home", key: undefined, auth: undefined },
+      ]);
+    } finally {
+      for (const s of Object.values(servers)) await new Promise<void>((r) => s.close(() => r()));
+    }
   });
 });
 

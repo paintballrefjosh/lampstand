@@ -377,6 +377,14 @@ async function main() {
     assert((await fetchWithCookies("/api/v1/me", {}, jar)).res.status === 200, "this browser must stay signed in");
   });
 
+  await test("DELETE /me/identities refuses a repeated id and answers 404 for one that is not linked", async () => {
+    // Neither can remove anything: the first is not text, the second is no sign-in of this account.
+    const { res: twice } = await fetchWithCookies("/api/v1/me/identities/google?id=a&id=b", { method: "DELETE" }, jar);
+    assert(twice.status === 400, `repeated id: status ${twice.status}`);
+    const { res: unknown } = await fetchWithCookies("/api/v1/me/identities/google?id=smoke-not-linked", { method: "DELETE" }, jar);
+    assert(unknown.status === 404, `unlinked id: status ${unknown.status}`);
+  });
+
   await test("DELETE /me/sessions/current signs this browser out (what the sign-out button does)", async () => {
     const mine = await signInFresh();
     await fetchWithCookies("/api/v1/me", {}, mine);

@@ -14,6 +14,8 @@ import { blockedAddress, contactHostProblem, type ContactHostOptions } from "@la
  *     server that answers differently the second time (rebinding).
  *  3. Redirects are never followed blindly: a GET may follow up to three, each target's host checked first; anything else
  *     is handed back as the 3xx it is.
+ *  4. A redirect to another origin takes none of the caller's headers with it (`headersForRedirect`): a connector's API key
+ *     is for the server the admin typed, not for wherever that server points.
  */
 export class OutboundBlockedError extends Error {
   constructor(message: string) {
@@ -75,12 +77,34 @@ export interface OutboundInit extends Omit<RequestInit, "redirect" | "dispatcher
   maxRedirects?: number;
 }
 
+/** The only headers that may follow a redirect to another origin. Anything else could be a credential. */
+const REDIRECT_SAFE_HEADERS = ["accept", "accept-language", "user-agent"];
+
+/**
+ * The headers for the request that follows a redirect. All of them while the origin stays the same, or when the same host
+ * moves from http to https on the default ports (the usual "use TLS" redirect); otherwise only the harmless ones. An
+ * allow list, not a list of credential names, because each connector names its key header differently (`X-API-Key`).
+ */
+export function headersForRedirect(from: URL, to: URL, headers: RequestInit["headers"]): Headers {
+  const all = new Headers(headers);
+  const upgraded = from.protocol === "http:" && to.protocol === "https:" && from.hostname === to.hostname && from.port === "" && to.port === "";
+  if (from.origin === to.origin || upgraded) return all;
+  const kept = new Headers();
+  for (const name of REDIRECT_SAFE_HEADERS) {
+    const value = all.get(name);
+    if (value !== null) kept.set(name, value);
+  }
+  return kept;
+}
+
 /** `fetch` for an administrator-typed address. See the rules above. */
 export async function outboundFetch(url: string, init: OutboundInit = {}): Promise<Response> {
   const { verifyTls = true, allowShortNames = false, maxRedirects = 3, ...rest } = init;
   const method = (rest.method ?? "GET").toUpperCase();
   const followable = method === "GET" || method === "HEAD";
   let current = url;
+  // Narrowed at each hop and never widened again, so a chain that comes back to the first server stays without them.
+  let headers = rest.headers;
   for (let hop = 0; ; hop++) {
     let target: URL;
     try {
@@ -91,11 +115,13 @@ export async function outboundFetch(url: string, init: OutboundInit = {}): Promi
     if (target.protocol !== "http:" && target.protocol !== "https:") throw new OutboundBlockedError("Only http and https addresses can be used.");
     const problem = contactHostProblem(target.hostname, { allowShortNames });
     if (problem) throw new OutboundBlockedError(problem);
-    const res = await fetch(current, { ...rest, redirect: "manual", dispatcher: outboundAgent(verifyTls) } as RequestInit & { dispatcher: Agent });
+    const res = await fetch(current, { ...rest, headers, redirect: "manual", dispatcher: outboundAgent(verifyTls) } as RequestInit & { dispatcher: Agent });
     const location = res.headers.get("location");
     if (res.status >= 300 && res.status < 400 && location && followable && hop < maxRedirects) {
       await res.body?.cancel().catch(() => undefined);
-      current = new URL(location, current).toString();
+      const next = new URL(location, target);
+      headers = headersForRedirect(target, next, headers);
+      current = next.toString();
       continue;
     }
     return res;

@@ -1856,7 +1856,8 @@ is typed, so a mixed-case row could never be matched.
   `unifi.controller_url`, `dns.primary_url`, the mailbox host, alert destinations, livestream links). **The API connects only through
   `apps/api/src/net/outbound.ts`** (`outboundFetch`, `outboundAgent`, `assertOutboundHost`): its socket `lookup` judges the address it is really
   connecting to (no check-then-resolve-again gap, so DNS rebinding does not work), redirects are followed for a GET only (3 hops, each host
-  checked) and never for anything else. A NEW connector that takes a host or URL from settings or a form uses it and gets a case in
+  checked) and never for anything else; **a redirect to another origin keeps only harmless headers** (`headersForRedirect`, so a connector's
+  key never follows; the same host moving from http to https keeps them). A NEW connector that takes a host or URL from settings or a form uses it and gets a case in
   `validateSettingValue`; never `fetch(`${host}...`)`, and never build a URL by pasting a typed host into a string (`propresenterUrl` allows
   letters, digits, dots and dashes only). `allowShortNames` keeps `pp7-mac`-style one-word LAN names working for the connectors that always
   accepted them; the stack's container names stay refused by name. A fake device in a test must listen on `lanAddress()` (`test/lan-address.ts`),

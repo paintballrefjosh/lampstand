@@ -253,9 +253,10 @@ export class MeController {
   async unlinkIdentity(
     @CurrentUser() user: AuthenticatedUser,
     @Param("provider") provider: string,
-    @Query("id") providerAccountId: string | undefined,
+    @Query("id") providerAccountId: unknown,
   ) {
-    if (!providerAccountId || providerAccountId.length > 256 || provider.length > 64) {
+    // A repeated `?id=` arrives as a list, which has a length too: ask for text before judging it.
+    if (typeof providerAccountId !== "string" || !providerAccountId || providerAccountId.length > 256 || provider.length > 64) {
       throw new BadRequestException("Say which sign-in method to remove");
     }
     await this.identities.unlink(user.id, provider, providerAccountId);
