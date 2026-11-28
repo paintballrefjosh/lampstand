@@ -74,6 +74,7 @@ export const ROUTE_RULES: RouteRule[] = [
   { pattern: "POST /unifi/test", status: "excluded", reason: NO_SECRETS },
   { pattern: "POST /propresenter/test", status: "excluded", reason: NO_SECRETS },
   { pattern: "POST /infra/targets/:id/update-run", status: "excluded", reason: "OS updates on a host: needs a sudo password and has no undo" },
+  { pattern: "GET /infra/update-run-defaults", status: "excluded", reason: "pre-ticks the web's Run updates dialog; starting a run is not a tool" },
   { pattern: "GET /audit/export.csv", status: "excluded", reason: "a file download; the audit log is read through GET /audit" },
   { pattern: "DELETE /admin/cluster/nodes/:id", status: "excluded", reason: ADMIN_WRITES },
   { pattern: "POST /users/:id/hard-delete", status: "excluded", reason: "permanent removal of an account" },

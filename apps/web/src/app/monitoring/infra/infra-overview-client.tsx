@@ -8,6 +8,9 @@ import { OS_META, capabilityLabels, StatusPill, Gauge } from "./infra-ui";
 import { useRealtimeRoom } from "@/lib/use-realtime";
 import { useSwitchModels } from "@/lib/use-switch-models";
 import { useHostHoverPreview } from "./host-hover-preview";
+import { HostFilterCard, useHostFilter } from "./host-filter-card";
+import { showsHost } from "@/lib/host-filter";
+import { targetsUpTone } from "@/lib/targets-up-tone";
 
 export function InfraOverviewClient({
   initialTargets,
@@ -20,6 +23,9 @@ export function InfraOverviewClient({
   const [summary, setSummary] = useState(initialSummary);
   const { models } = useSwitchModels();
   const { cardProps, card } = useHostHoverPreview(models);
+  // The switches choose which host cards show; the summary tiles always count every host.
+  const [filter, setFilter] = useHostFilter();
+  const shown = targets.filter((t) => showsHost(filter, t));
 
   const load = useCallback(async () => {
     try {
@@ -56,11 +62,11 @@ export function InfraOverviewClient({
   return (
     <div className="space-y-6">
       {summary ? (
-        <section className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        <section className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-[repeat(5,minmax(0,1fr))_auto]">
           <SummaryTile
             label="Targets up"
             value={`${summary.targets.up}/${summary.targets.total}`}
-            tone="ok"
+            tone={targetsUpTone(summary.targets)}
             sub={summary.targets.disabled ? `${summary.targets.disabled} disabled` : undefined}
           />
           <SummaryTile
@@ -98,6 +104,7 @@ export function InfraOverviewClient({
                   : undefined
             }
           />
+          <HostFilterCard filter={filter} hidden={targets.length - shown.length} onChange={setFilter} />
         </section>
       ) : null}
 
@@ -112,9 +119,13 @@ export function InfraOverviewClient({
             .
           </p>
         </div>
+      ) : shown.length === 0 ? (
+        <p className="rounded-md border border-dashed border-slate-300 p-10 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
+          Every host is hidden by the filter above.
+        </p>
       ) : (
         <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {targets.map((t) => (
+          {shown.map((t) => (
             <TargetCard key={t.id} target={t} hoverProps={cardProps(t)} />
           ))}
         </ul>
@@ -243,7 +254,8 @@ function SummaryTile({
 }: {
   label: string;
   value: string;
-  tone: "ok" | "warn" | "bad";
+  /** "ok" is the plain text colour; "good" is green. */
+  tone: "ok" | "good" | "warn" | "bad";
   sub?: string;
 }) {
   const toneClass =
@@ -251,7 +263,9 @@ function SummaryTile({
       ? "text-rose-600 dark:text-rose-400"
       : tone === "warn"
         ? "text-amber-700 dark:text-amber-400"
-        : "text-slate-900 dark:text-slate-100";
+        : tone === "good"
+          ? "text-emerald-700 dark:text-emerald-400"
+          : "text-slate-900 dark:text-slate-100";
   return (
     <div className="rounded-md border border-slate-300 p-3 dark:border-slate-800">
       <div className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">{label}</div>

@@ -5,7 +5,9 @@ import { createPortal } from "react-dom";
 import Link from "next/link";
 import { Fragment, useCallback, useEffect, useState, type FormEvent } from "react";
 import { Pencil, Power, Trash2, AlertTriangle, CircleCheck, Download, KeyRound, Loader2, RefreshCw, X } from "lucide-react";
+import { DEFAULT_INFRA_UPDATE_RUN_OPTIONS } from "@lampstand/shared";
 import type {
+  InfraUpdateRunOptions,
   InfraTarget,
   InfraEntity,
   InfraMetricPoint,
@@ -124,7 +126,8 @@ export function InfraDetailClient({
   }
 
   const [updateRuns, setUpdateRuns] = useState(initialUpdateRuns);
-  const [runModalOpen, setRunModalOpen] = useState(false);
+  // The "Run updates" dialog is open when this is set: the checkboxes it starts with.
+  const [runDefaults, setRunDefaults] = useState<InfraUpdateRunOptions | null>(null);
   const [runErr, setRunErr] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const runningRun = updateRuns.find((r) => r.status === "running") ?? null;
@@ -172,6 +175,24 @@ export function InfraDetailClient({
     }
   }
 
+  // Opens the dialog with the boxes ticked as they were for the last update run on any host. Asked each time, since a
+  // run elsewhere changes the answer; if it cannot be read the dialog opens with the built-in defaults.
+  async function openRunModal() {
+    setRunErr(null);
+    let defaults = DEFAULT_INFRA_UPDATE_RUN_OPTIONS;
+    try {
+      const r = await fetch("/api/infra/update-run-defaults", {
+        credentials: "same-origin",
+        cache: "no-store",
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (r.ok) defaults = (await r.json()) as InfraUpdateRunOptions;
+    } catch {
+      /* the defaults will do */
+    }
+    setRunDefaults(defaults);
+  }
+
   async function startRun(
     reboot: boolean,
     fullUpgrade: boolean,
@@ -204,7 +225,7 @@ export function InfraDetailClient({
       }
       const started = (await r.json().catch(() => null)) as InfraUpdateRun | null;
       if (started?.id) setWatchRunId(started.id);
-      setRunModalOpen(false);
+      setRunDefaults(null);
       // The password is in: put the terminal away. The run's progress shows on the Updates card, and the watch
       // effect above brings the dialog back only if sudo refuses it (wrong password).
       if (sudo) setSudoRun(null);
@@ -510,10 +531,7 @@ export function InfraDetailClient({
             metrics={sampleMetrics}
             target={target}
             updateRuns={updateRuns}
-            onRunUpdates={() => {
-              setRunErr(null);
-              setRunModalOpen(true);
-            }}
+            onRunUpdates={() => void openRunModal()}
             checkingUpdates={checkingUpdates}
             onCheckForUpdates={() => void checkForUpdates()}
             onResolveSudo={(run) => setSudoRun(run)}
@@ -527,12 +545,13 @@ export function InfraDetailClient({
       )}
       </div>
 
-      {runModalOpen ? (
+      {runDefaults ? (
         <RunUpdatesModal
           targetName={target.name}
+          defaults={runDefaults}
           busy={starting}
           err={runErr}
-          onCancel={() => setRunModalOpen(false)}
+          onCancel={() => setRunDefaults(null)}
           onConfirm={(reboot, fullUpgrade, includePhased, cleanup) => void startRun(reboot, fullUpgrade, includePhased, cleanup)}
         />
       ) : null}
@@ -1060,21 +1079,23 @@ function SudoTerminalDialog({
 
 function RunUpdatesModal({
   targetName,
+  defaults,
   busy,
   err,
   onCancel,
   onConfirm,
 }: {
   targetName: string;
+  defaults: InfraUpdateRunOptions;
   busy: boolean;
   err: string | null;
   onCancel: () => void;
   onConfirm: (reboot: boolean, fullUpgrade: boolean, includePhased: boolean, cleanup: boolean) => void;
 }) {
-  const [reboot, setReboot] = useState(true);
-  const [fullUpgrade, setFullUpgrade] = useState(false);
-  const [includePhased, setIncludePhased] = useState(false);
-  const [cleanup, setCleanup] = useState(false);
+  const [reboot, setReboot] = useState(defaults.reboot);
+  const [fullUpgrade, setFullUpgrade] = useState(defaults.fullUpgrade);
+  const [includePhased, setIncludePhased] = useState(defaults.includePhased);
+  const [cleanup, setCleanup] = useState(defaults.cleanup);
   const panelRef = useModal<HTMLDivElement>(() => {
     if (!busy) onCancel();
   });
@@ -1105,7 +1126,8 @@ function RunUpdatesModal({
         </div>
         <p className="text-sm text-slate-600 dark:text-slate-400">
           This installs the host&apos;s pending package updates over SSH. It can take several minutes and touches a
-          live host — make sure that&apos;s expected right now.
+          live host — make sure that&apos;s expected right now. The boxes start as they were for the last update run
+          on any host.
         </p>
         <label className="mt-4 flex items-start gap-2 rounded-md border border-slate-200 p-2.5 text-sm dark:border-slate-800">
           <input

@@ -1722,6 +1722,15 @@ async function main() {
     assert(after.status === 404, `expected 404, got ${after.status}`);
   });
 
+  await test("GET /api/v1/infra/update-run-defaults answers the four update run choices", async () => {
+    const { res } = await fetchWithCookies("/api/v1/infra/update-run-defaults", {}, jar);
+    assert(res.status === 200, `status ${res.status}`);
+    const body = await res.json();
+    for (const k of ["reboot", "fullUpgrade", "includePhased", "cleanup"]) {
+      assert(typeof body[k] === "boolean", `${k}: ${JSON.stringify(body)}`);
+    }
+  });
+
   // ---- Infrastructure: switching a host's monitoring off ----
   {
     let infraId = null;

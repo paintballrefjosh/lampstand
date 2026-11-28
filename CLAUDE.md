@@ -342,6 +342,11 @@ Run updates dialog): after a SUCCESSFUL upgrade `upgradeScript` runs `apt-get -y
 A failing autoremove fails the run (exit code), its output follows the upgrade's in the same log, and it is off by default because it deletes software.
 Test: `apps/api/test/infra-update-cleanup.test.ts`.
 
+**The Run updates dialog remembers its checkboxes** (2026-11-28): they start as they were for the most recent run on ANY host by anyone
+(`GET /infra/update-run-defaults`, `InfraUpdaterService.lastRunOptions`, read from `infra_update_runs`, so nothing separate is stored);
+`DEFAULT_INFRA_UPDATE_RUN_OPTIONS` (reboot only) when there is no run. Cancelling the dialog changes nothing. A new checkbox in that
+dialog joins `InfraUpdateRunOptions`, the query and the defaults.
+
 **Switching a Cisco switch off** (`cisco_switches.enabled`, migration 0090; the Monitoring pill in the switch list, the same pill on the switch page, and a
 checkbox in Edit switch; all use `PATCH /cisco/switches/:id {enabled}`): `pollAll` skips it, `pollSwitch` returns at once and `pinnedConn` refuses, so no
 SSH login happens at all (no backups, drift checks, pushes); the poll, re-import, collect, backup, drift-push and port-toggle routes answer 409
@@ -355,6 +360,11 @@ but are left out of `openAlerts` and the open-incident list (nothing is polling 
 counts it under `targets.disabled`, not in `total`. Switching it back on clears `last_polled_at` and sets the
 status to `unknown`, so it is polled at the next tick and the old reading is not mistaken for a current one. The
 overview greys the card and says "Disabled"; the host page greys its last readings and shows a banner.
+
+**Infra overview host filter** (`/monitoring/infra`, `host-filter-card.tsx`, rules in `apps/web/src/lib/host-filter.ts` with a test): switches for
+down, disabled and up hosts, a tile on the summary row, remembered in this browser. They filter the host cards only, never the summary
+tiles. Degraded and unknown hosts have no switch and always show. The "Targets up" figure is green when all are up, amber while at
+most 3 are down (degraded or unread alone is amber) and red beyond that (`lib/targets-up-tone.ts`).
 
 **Maintenance mode:** the `monitoring.maintenance_mode` boolean setting silences
 alert *notifications* across infra thresholds, service up/down, UniFi
