@@ -26,8 +26,10 @@ playwright-report/
 test-results/
 .playwright/
 
-# editor / agent state
-.claude/
+# editor / agent state (the shared rules in .claude/rules/ are tracked)
+.claude/*
+!.claude/rules/
+*/**/.claude/
 .vscode/
 .idea/
 
