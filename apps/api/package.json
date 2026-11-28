@@ -17,7 +17,7 @@
     "@anthropic-ai/sdk": "0.137.0",
     "@auth/core": "0.41.3",
     "@fastify/cookie": "11.1.5",
-    "@fastify/multipart": "9.4.0",
+    "@fastify/multipart": "10.1.7",
     "@fastify/rate-limit": "10.3.0",
     "@lampstand/shared": "workspace:*",
     "@modelcontextprotocol/sdk": "1.32.2",
