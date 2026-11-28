@@ -138,12 +138,25 @@ const recordComments = z
 
 const recordTtl = z.number().int().min(0).max(604_800);
 
+/**
+ * A records only: also point the address's reverse (PTR) record at this name. A PTR the IPAM sync owns is never
+ * replaced.
+ */
+const createPtr = z.boolean().default(false);
+/** With createPtr: the host names the caller agrees to have the reverse record stop pointing to. */
+const replacePtr = z.array(z.string().max(253)).max(16).default([]);
+/** With createPtr: create the reverse zone (a primary zone for the address's /24) when the server has none. */
+const createPtrZone = z.boolean().default(false);
+
 export const dnsRecordCreateSchema = z.object({
   name: recordName,
   /** Omitted = Technitium's default TTL. */
   ttl: recordTtl.optional(),
   comments: recordComments.default(""),
   data: dnsRecordDataSchema,
+  createPtr,
+  replacePtr,
+  createPtrZone,
 });
 export type DnsRecordCreateInput = z.infer<typeof dnsRecordCreateSchema>;
 
@@ -158,6 +171,9 @@ export const dnsRecordUpdateSchema = z
     ttl: recordTtl,
     comments: recordComments.default(""),
     data: dnsRecordDataSchema,
+    createPtr,
+    replacePtr,
+    createPtrZone,
   })
   .refine((v) => v.current.data.type === v.data.type, {
     message: "Record type can't change; delete the record and add a new one",
@@ -165,7 +181,15 @@ export const dnsRecordUpdateSchema = z
   });
 export type DnsRecordUpdateInput = z.infer<typeof dnsRecordUpdateSchema>;
 
-export const dnsRecordDeleteSchema = z.object({ name: recordName, data: dnsRecordDataSchema });
+export const dnsRecordDeleteSchema = z.object({
+  name: recordName,
+  data: dnsRecordDataSchema,
+  /**
+   * A records only: also remove the reverse record that points to this name. Technitium removes it by itself when the A
+   * record goes, so `false` means it is put back. A PTR the IPAM sync owns is always kept.
+   */
+  removePtr: z.boolean().default(true),
+});
 export type DnsRecordDeleteInput = z.infer<typeof dnsRecordDeleteSchema>;
 
 /** Response of every record write; the audit log stores it as the "after" snapshot. */
@@ -175,6 +199,49 @@ export interface DnsRecordWriteResult {
   zone: string;
   before: DnsRecord | null;
   after: DnsRecord | null;
+  /** Present when the write asked for a reverse record, or deleted an A record that had one. */
+  ptr?: DnsPtrOutcome;
+}
+
+/** What happened to the reverse record of a write that touched one. */
+export interface DnsPtrOutcome {
+  zone: string;
+  /** e.g. "25.10.0.10.in-addr.arpa". */
+  name: string;
+  /** The host name of the A record that was written or deleted. */
+  target: string;
+  /** Other host names it pointed to before. */
+  replaced: string[];
+  /**
+   * The reverse record that was removed: the old address's after an address change, or the deleted record's. Null after a
+   * delete means it was kept.
+   */
+  removed: string | null;
+  /** The reverse zone `zone` was created by this write. */
+  createdZone: boolean;
+  /** Set when the A record was written but the reverse record was not fully dealt with. */
+  error: string | null;
+}
+
+/** A record write refused, with nothing changed, until the caller agrees to what it would do. */
+export type DnsPtrRefusal =
+  /** Send `replacePtr` with `current` to go ahead. */
+  | { code: "dns_ptr_exists"; message: string; name: string; current: string[]; target: string }
+  /** Send `createPtrZone: true` to go ahead. */
+  | { code: "dns_ptr_zone_missing"; message: string; name: string; reverseZone: string };
+
+export const dnsPtrQuerySchema = z.object({
+  ip: z.string().trim().ip({ version: "v4", message: "Invalid IPv4 address" }),
+});
+
+/** The reverse record of one address, as it is now. */
+export interface DnsPtrState {
+  name: string;
+  /** The reverse zone holding it, or null when this server has none. */
+  zone: string | null;
+  /** The zone is a primary one, so its records can be changed here. */
+  editable: boolean;
+  records: Array<{ target: string; managed: boolean }>;
 }
 
 export const dnsTopEntrySchema = z.object({

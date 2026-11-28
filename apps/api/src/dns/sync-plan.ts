@@ -92,7 +92,7 @@ export function ptrName(ip: string): string {
 }
 
 /** Longest hosted reverse zone containing `name`, or null. */
-function reverseZoneFor(name: string, zones: string[]): string | null {
+export function reverseZoneFor(name: string, zones: string[]): string | null {
   let best: string | null = null;
   for (const z of zones) {
     if (!z.endsWith("in-addr.arpa")) continue;

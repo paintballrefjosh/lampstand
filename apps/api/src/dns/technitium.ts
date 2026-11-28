@@ -157,6 +157,8 @@ export interface TZone {
   name?: string;
   type?: string;
   internal?: boolean;
+  /** The catalog zone this one is a member of (how a cluster's secondaries get it). */
+  catalog?: string;
   disabled?: boolean;
   dnssecStatus?: string;
   soaSerial?: number;

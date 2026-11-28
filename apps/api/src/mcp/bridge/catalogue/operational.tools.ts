@@ -179,7 +179,7 @@ export const OPERATIONAL_TOOLS = [
     name: "dns_create_record",
     title: "Add a DNS record",
     description:
-      "Add a record to a live zone on the DNS primary (zone is its name). data is the structured value by type: A and AAAA (ipAddress), CNAME (cname), PTR (ptrName), MX (preference, exchange), TXT (text), SRV (priority, weight, port, target). name is @ for the apex, a relative name or a full name in the zone. This takes effect for every client: check dns_list_records for an existing record first.",
+      "Add a record to a live zone on the DNS primary (zone is its name). data is the structured value by type: A and AAAA (ipAddress), CNAME (cname), PTR (ptrName), MX (preference, exchange), TXT (text), SRV (priority, weight, port, target). name is @ for the apex, a relative name or a full name in the zone. createPtr true (A records only) also points the address's reverse (PTR) record at the name. The call is refused, with nothing changed, if that record points elsewhere (send replacePtr with the current names) or the reverse zone is missing (send createPtrZone true); ask the person before sending either. This takes effect for every client: check dns_list_records for an existing record first.",
     cls: "operational",
     method: "POST",
     path: "/dns/zones/:zone/records",
@@ -190,7 +190,7 @@ export const OPERATIONAL_TOOLS = [
     name: "dns_update_record",
     title: "Change a DNS record",
     description:
-      "Change one record of a live zone. current is the record as it is now (name and data, copied from dns_list_records); name, ttl, comments and data are the new values and all of them are required, so give the unchanged ones too. The type cannot change. Records owned by the IPAM sync are refused. This takes effect for every client.",
+      "Change one record of a live zone. current is the record as it is now (name and data, copied from dns_list_records); name, ttl, comments and data are the new values and all of them are required, so give the unchanged ones too. The type cannot change. createPtr true (A records only) also points the new address's reverse (PTR) record at the new name and removes the old address's one if it pointed at this record; it is refused, with nothing changed, if the new address's record points to another name (replacePtr) or its reverse zone is missing (createPtrZone): ask the person before sending either. Records owned by the IPAM sync are refused. This takes effect for every client.",
     cls: "operational",
     method: "PATCH",
     path: "/dns/zones/:zone/records",

@@ -1,5 +1,12 @@
 import { z } from "zod";
-import { DNS_STATS_RANGES, PERMISSIONS, createRenewalSchema, dnsHealthMonitorsSchema, updateRenewalSchema } from "@lampstand/shared";
+import {
+  DNS_STATS_RANGES,
+  PERMISSIONS,
+  createRenewalSchema,
+  dnsHealthMonitorsSchema,
+  dnsPtrQuerySchema,
+  updateRenewalSchema,
+} from "@lampstand/shared";
 import { defineTool } from "../bridge.types";
 
 const id = z.string().uuid();
@@ -48,6 +55,17 @@ export const NETWORK_TOOLS = [
     path: "/dns/zones/:zone/records",
     permissions: [READ],
     input: z.object({ zone: z.string().min(1).max(253) }),
+  }),
+  defineTool({
+    name: "dns_get_reverse_record",
+    title: "Reverse record of an address",
+    description:
+      "The reverse (PTR) record of one IPv4 address as it is now: its name, the reverse zone holding it (null when there is none), whether it can be edited, and the host names it points to.",
+    cls: "read",
+    method: "GET",
+    path: "/dns/ptr",
+    permissions: [READ],
+    input: dnsPtrQuerySchema,
   }),
   defineTool({
     name: "dns_get_stats",

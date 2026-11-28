@@ -275,8 +275,18 @@ query stats, zones and records, plus audited record create/edit/delete
 so writes address a record by zone + name + structured `data` and re-read it
 first: that read is the audit "before", supplies the current TTL/disabled flag
 (an update that omits them resets TTL to 3600 and re-enables the record), and
-refuses (409) records whose comment carries `DNS_MANAGED_MARKER`. Same
-`monitors:*` permissions as cisco/ipam/ups.
+refuses (409) records whose comment carries `DNS_MANAGED_MARKER`. An A record write may ask for its **reverse record**
+(`createPtr`, the form's "Create reverse DNS record" switch, off by default): the service writes the PTR itself
+(`planPtr`/`writePtr`), not with Technitium's `ptr` flag. **Nothing is overwritten or created without a yes**: a PTR that
+points to another name, or a missing reverse zone, answers 409 with a `DnsPtrRefusal` and writes nothing, until the call
+repeats with `replacePtr` (exactly the names shown) or `createPtrZone` (a primary /24 zone in the forward zone's
+**catalog**, so cluster secondaries get it); the form shows the current value and asks. The record's own PTR follows a
+rename without asking. A sync-owned PTR pointing elsewhere or a non-primary reverse zone is refused outright; an address
+change removes the old address's hand-made PTR only if it pointed at the edited name; a PTR failure after the A record is
+saved comes back as `ptr.error`, not an error status. **Deleting an A record: Technitium itself removes a PTR that points
+back at it** (verified; no parameter stops it), so `removePtr: false` (the delete dialog's switch, on by default) writes it
+again with its TTL, comment and disabled flag; a sync-owned one is always kept. `GET /dns/ptr?ip=` is what the dialog shows
+(`dns-ptr.test.ts`). Same `monitors:*` permissions as cisco/ipam/ups.
 
 **IPAM→DNS sync** (`dns/dns.sync.ts`, `dns_*` settings, migration 0048): hosts
 in subnets with `ipam_subnets.dns_sync` on get an A record in `dns.sync_zone`

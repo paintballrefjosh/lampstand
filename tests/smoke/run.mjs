@@ -1860,6 +1860,14 @@ async function main() {
     });
     assert(res.status === 400, `status ${res.status}`);
   });
+  await test("POST /api/v1/dns/zones/:zone/records refuses a reverse record for a non-A record", async () => {
+    const { res } = await dnsWrite("POST", {
+      name: "alias",
+      data: { type: "CNAME", cname: "host.example.org" },
+      createPtr: true,
+    });
+    assert(res.status === 400, `status ${res.status}`);
+  });
   await test("PATCH /api/v1/dns/zones/:zone/records refuses a type change", async () => {
     const { res } = await dnsWrite("PATCH", {
       current: { name: "printer", data: { type: "A", ipAddress: "10.0.0.5" } },
