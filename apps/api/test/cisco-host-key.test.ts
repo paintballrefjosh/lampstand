@@ -4,9 +4,10 @@ import { AddressInfo } from "node:net";
 import { Server, utils } from "ssh2";
 import { sshShell } from "../src/cisco/ssh";
 import { SshHostKeyMismatchError } from "../src/infra/collectors/ssh";
+import { testHostKey } from "./helpers/ssh-host-key";
 
 function startServer(): { server: Server; port: Promise<number>; fingerprint: string; accepted: () => number } {
-  const pair = utils.generateKeyPairSync("ed25519");
+  const pair = testHostKey();
   const parsed = utils.parseKey(pair.public);
   if (parsed instanceof Error) throw parsed;
   const fingerprint = createHash("sha256").update(parsed.getPublicSSH()).digest("base64");
