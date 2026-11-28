@@ -1,4 +1,4 @@
-import { Controller, Get } from "@nestjs/common";
+import { Controller, Get, Req } from "@nestjs/common";
 import { PERMISSIONS } from "@lampstand/shared";
 import { RequirePermissions } from "../auth/permissions.decorator";
 import { SessionOnly } from "../auth/session-only.decorator";
@@ -12,7 +12,11 @@ export class SecurityPostureController {
   @Get()
   @SessionOnly()
   @RequirePermissions(PERMISSIONS.SITE_ADMIN)
-  get() {
-    return this.posture.report();
+  get(@Req() req: { ip?: string; headers?: Record<string, string | string[] | undefined> }) {
+    // The forwarded chain as it reached the API, so an admin can see which address their proxy adds (leftmost first; the
+    // socket is Caddy or the web container and says nothing, so it is left out).
+    const raw = req.headers?.["x-forwarded-for"];
+    const chain = (Array.isArray(raw) ? raw.join(",") : (raw ?? "")).split(",").map((s) => s.trim()).filter(Boolean).slice(-20);
+    return this.posture.report(new Date(), { yourAddress: req.ip ?? null, yourChain: chain });
   }
 }

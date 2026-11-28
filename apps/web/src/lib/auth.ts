@@ -5,8 +5,9 @@ import MicrosoftEntraID from "next-auth/providers/microsoft-entra-id";
 import { DrizzleAdapter } from "@auth/drizzle-adapter";
 import { createHash, randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { googleSignInDecision, mayLinkByEmail, microsoftSignInDecision } from "@lampstand/shared";
+import { forwardedChain, googleSignInDecision, mayLinkByEmail, microsoftSignInDecision } from "@lampstand/shared";
 import { db, schema } from "./db";
+import { SIGNIN_TIMEOUT_MS, signinFailureFor } from "./signin-failure";
 
 const apiInternalUrl = process.env.API_INTERNAL_URL ?? "http://api:3001";
 
@@ -150,10 +151,10 @@ function buildProviders(cfg: ProviderConfig) {
           totp: { label: "TOTP", type: "text" },
         },
         async authorize(creds, request) {
-          // The API counts failed sign-ins per address, so pass the person's (Caddy overwrites X-Forwarded-For with
-          // the real client address on the way in). Without it every sign-in on the site shared one bucket: the web
-          // container's address. The route is internal only, hence the token.
-          const fwd = request?.headers?.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "";
+          // The API counts failed sign-ins per address, so pass the forwarded chain on (Caddy adds the address it was
+          // connected from; the API decides which entry is the person's, by the trusted-proxy settings). Without it every
+          // sign-in on the site shared one bucket: the web container's address. The route is internal only, hence the token.
+          const fwd = forwardedChain(request?.headers?.get("x-forwarded-for"));
           const ua = request?.headers?.get("user-agent") ?? "";
           const payload = {
             email: typeof creds?.email === "string" ? creds.email : "",
@@ -171,11 +172,17 @@ function buildProviders(cfg: ProviderConfig) {
               },
               body: JSON.stringify(payload),
               cache: "no-store",
+              signal: AbortSignal.timeout(SIGNIN_TIMEOUT_MS),
             });
             if (!res.ok) {
               const body = (await res.json().catch(() => ({}))) as { code?: string };
-              if (body.code === "account_deleted") throw new AccountDeletedSignin();
-              if (res.status === 429) throw new TooManyAttemptsSignin();
+              const failure = signinFailureFor(res.status, body.code);
+              if (failure === "account_deleted") throw new AccountDeletedSignin();
+              if (failure === "too_many_attempts") throw new TooManyAttemptsSignin();
+              if (failure === "unavailable") {
+                console.warn(`[auth] sign-in could not be checked: the API answered ${res.status}`);
+                throw new UnavailableSignin();
+              }
               return null;
             }
             const data = (await res.json()) as
@@ -209,9 +216,11 @@ function buildProviders(cfg: ProviderConfig) {
                 typeof data.user.pageWidthPx === "number" ? data.user.pageWidthPx : null,
             } as never;
           } catch (err) {
-            if (err instanceof AccountDeletedSignin || err instanceof TooManyAttemptsSignin) throw err;
+            if (err instanceof CredentialsSignin) throw err;
             if (err instanceof Error && err.message === "TOTP_REQUIRED") throw err;
-            return null;
+            // No answer at all (API down or restarting, timed out, not JSON): nothing is known about the password.
+            console.warn(`[auth] sign-in could not be checked: ${err instanceof Error ? err.message : String(err)}`);
+            throw new UnavailableSignin();
           }
         },
       }),
@@ -234,6 +243,11 @@ class AccountDeletedSignin extends CredentialsSignin {
 /** Thrown from `authorize()` when the API refuses further attempts for the account (`too_many_attempts`). */
 class TooManyAttemptsSignin extends CredentialsSignin {
   override code = "too_many_attempts";
+}
+
+/** Thrown from `authorize()` when the API could not check the credentials at all (see `signin-failure.ts`). */
+class UnavailableSignin extends CredentialsSignin {
+  override code = "unavailable";
 }
 
 /**

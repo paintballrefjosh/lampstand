@@ -1,6 +1,7 @@
 import { isSingleTenant } from "./oauth-policy";
 import { OFFSITE_STALE_DAYS } from "./backup-offsite";
 import { judgeVerification, type VerifyFacts } from "./backup-verify";
+import type { ClientIpMode } from "./client-ip";
 
 /**
  * The admin "Security" overview: facts about how the site is set up, judged by plain rules into a list of checks an
@@ -46,6 +47,11 @@ export interface PostureFacts {
   auditRetentionDays: number;
   /** The status page is also published without sign-in (`monitoring.status_public`). */
   publicStatus?: boolean;
+  /**
+   * Which forwarded address counts as a person's (client-ip.ts), plus what the asking admin's own request looked like:
+   * the forwarded chain as it reached the API (leftmost first) and the entry the site picked from it.
+   */
+  clientIp?: { mode: ClientIpMode; proxies: number; fromEnv: boolean; yourAddress: string | null; yourChain: string[] };
   /** Signage (only when at least one Pi is set up or a setup password is saved; docs/signage.md section 6). */
   signage?: {
     devices: number;
@@ -285,6 +291,41 @@ export function evaluatePosture(f: PostureFacts): PostureReport {
       fix: { label: "Open Monitoring settings", href: "/monitoring/settings" },
     });
   }
+  if (f.clientIp) {
+    const c = f.clientIp;
+    const fix = { label: "Authentication settings", href: "/admin/settings/auth" };
+    const seen =
+      c.yourChain.length > 1
+        ? ` Your own request arrived through ${c.yourChain.join(" -> ")} (the last one is what connected to this site), and the site recorded ${c.yourAddress ?? "nothing"}.`
+        : c.yourAddress
+          ? ` The site recorded ${c.yourAddress} for your own request.`
+          : "";
+    if (c.mode === "any") {
+      add({
+        id: "client-ip",
+        title: "Anyone can choose the address the site records for them",
+        severity: "warn",
+        detail:
+          `No trusted proxy is set, so the site believes whatever forwarded address a request claims. A made-up one steps around the per-address sign-in and rate limits, and the audit log records it. Set "Trusted proxies" to your load balancer's address, or switch on strict mode with an empty list if nothing sits in front of the site.${seen}`,
+        fix,
+      });
+    } else if (c.mode === "standard") {
+      add({
+        id: "client-ip",
+        title: `The forwarded address is believed from ${plural(c.proxies, "trusted proxy", "trusted proxies")}`,
+        severity: "info",
+        detail: `This is right only if the proxy replaces the forwarded address. Most (nginx, HAProxy, cloud load balancers) add to it, which lets a sender put a made-up address first: switch on strict mode for those.${seen}`,
+        fix,
+      });
+    } else {
+      add({
+        id: "client-ip",
+        title: "The site records each person's real address",
+        severity: "ok",
+        detail: `${c.proxies === 0 ? "Nothing is trusted in front of the site, so the connecting address is used." : `Forwarded addresses are read from the right, past ${plural(c.proxies, "trusted proxy", "trusted proxies")}${c.fromEnv ? " (TRUSTED_PROXIES in .env, until the setting is filled in)" : ""}.`}${seen}`,
+      });
+    }
+  }
   if (!f.siteUrlSet) {
     add({
       id: "site-url",
@@ -367,9 +408,9 @@ export function evaluatePosture(f: PostureFacts): PostureReport {
     } else if (!f.helpdeskEmail.authServerSet) {
       add({
         id: "helpdesk-email",
-        title: "Helpdesk email believes the topmost sender check",
-        severity: "info",
-        detail: "Name your mail server in the helpdesk email settings, so only a check it wrote counts. A provider that adds none would otherwise leave a sender's forged one to be believed.",
+        title: "Helpdesk email is not being read",
+        severity: "warn",
+        detail: "Sender checks need your mail server's name, so that only a check it wrote is believed (a sender can forge one). Until it is filled in, mail waits in the mailbox and no tickets are opened from it.",
         fix,
       });
     } else {

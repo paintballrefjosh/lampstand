@@ -409,7 +409,10 @@ day ranges, windows across midnight, on `site.timezone`). Outside every window t
 (`MONITOR_SECRET_OPTION_KEYS`: the HTTP probe's `authorization`, the `password` of PJLink/OBS) are stored for the worker but every monitor the API
 returns carries `[saved]` instead (`redactMonitorOptions`; the Monitoring USER tier, every volunteer, reads monitors, and so do MCP tools); on an
 update the placeholder, or a secret key left out, keeps the saved value and `""` removes it (`mergeMonitorSecretOptions`). Until 2026-10-25 the
-Authorization header was returned to every reader, and editing the monitor in the form silently dropped it. (4) **`options.alerts: false`
+Authorization header was returned to every reader, and editing the monitor in the form silently dropped it. **Printer and UPS credentials** (SNMP
+community, Fiery API key) follow the same rule through `settings/device-secret.ts`: answers say `[saved]`, rows hold `enc:v1:`, the pollers seal
+values still in plain text (older rows, older backups), and a Test with `[saved]` sends the device id (until 2026-11-13 GET /printers gave every
+volunteer the Fiery key and community in clear). (4) **`options.alerts: false`
 mutes a monitor** (`monitorAlertsOff`, the form's "Send alerts" box, "Alerts off" on its page): incidents, activity and the status page are
 unchanged, but the worker sends no down/up/flapping notice and `alert-escalation` skips its incidents. **A test monitor that goes down on
 purpose must set it** (smoke `alerts.mjs`, e2e `status.spec.ts`): until 2026-10-25 every run told the real monitoring recipients, and the
@@ -567,7 +570,9 @@ group with moderator/admin on Tickets plus the admin group. (3) *Saved replies* 
 lastUid}` in `job_state` (first look = last 24 h only) and records every message by Message-ID in `ticket_inbound_log` (unique; the real
 dedupe; `skip` in the backup registry; 90-day prune). **Never trust a From line**: a sender must be an active, approved account with
 `tickets:write:own` AND pass `senderAuthenticated` (`strict` DMARC pass by default, `aligned`, or `off`), judged only on an
-Authentication-Results header written by `tickets.inbound.auth_server` when that is set (`pickAuthResultsHeader`). **The mailbox never
+Authentication-Results header written by `tickets.inbound.auth_server` (`pickAuthResultsHeader`; a blank name believes nothing, and with sender
+checks on and no name the job stops before reading, `inboundAuthServerProblem`, so waiting mail is read once it is set; until 2026-11-13 a blank
+name believed the topmost header, which a sender can forge when the provider adds none). **The mailbox never
 sends anything back** (no bounces, no auto-replies: no loops, no backscatter), skips auto-generated mail, the site's own address and a
 sender over 30 messages/hour. A subject with `[#n]` comments on that ticket if the sender can read it (quoted text cut by
 `stripQuotedReply`), otherwise a new ticket is opened (a forwarded message is the request, so new tickets keep quoted text). Ticket emails
@@ -807,12 +812,25 @@ audit snapshot.
   `describeUserAgent` (`packages/shared/src/user-agent.ts`) turns it into "Firefox on Windows".
 - **`POST /me/change-password` needs `currentPassword`**, except for a forced change (`mustChangePassword`) and for an
   account with no local password yet. The web profile form signs the person out after it.
+- **The person's address** (`req.ip`: rate limits, failed sign-in counts, audit, sessions) is decided by the API, per request, from
+  the site settings `auth.trusted_proxies` and `auth.trusted_proxies_strict` (Admin > Settings > Authentication; rules in
+  `packages/shared/src/client-ip.ts`, the per-node holder `auth/client-ip.ts`, refreshed every 5 s; Fastify `trustProxy: trustProxyHop`).
+  Caddy never picks: it keeps a trusted peer's `X-Forwarded-For` and appends the address it was connected from (**never `header_up
+  X-Forwarded-For` in the Caddyfile**), and the web passes the whole chain on (`forwardedChain`, rightmost 20). Modes: `any` (no list, strict
+  off: the leftmost entry, which anyone can forge; the default, so an upgrade changes nothing, and a Security overview warning), `strict` (from
+  the right, the first address not in the list; with an empty list, whoever connected to Caddy), `standard` (the leftmost only when a trusted
+  proxy connected). `TRUSTED_PROXIES` in `.env` (the older way) still narrows which peers Caddy passes on and is the API's list, read strictly,
+  while the setting is blank. Until 2026-11-13 Caddy took the leftmost entry itself and a forged header stepped around every per-address limit.
+  Tests: `client-ip.test.ts` (a real Fastify with the trust function), smoke.
 - **Failed sign-ins are counted per account** (`RateLimitService.failures/recordFailure/clearFailures`, same
   `rate_limit_buckets` table, key `acct|<identifier typed>`, existing account or not): 10 failures in 15 minutes
   refuse further attempts with 429 `too_many_attempts`; a success clears it. **And per address**: 30 failures in 15
   minutes (`MAX_FAILED_SIGNINS_PER_IP`, key `acct|ip|<address>`, never cleared by a success). Failures, not attempts: a
   church's volunteers share one public address on the building Wi-Fi. `verify-credentials` always spends the
   time of one argon2 check (`verifyPasswordOrDecoy`) and says "deleted" only after the right password.
+- **"Invalid credentials" is only for a refusal** (`apps/web/src/lib/signin-failure.ts`, unit-tested): the API's 400/401 to
+  `verify-credentials`. A 5xx or any other status, no answer within 30 s or an unreadable one is `code=unavailable`, and the
+  sign-in page says the server could not check the password. Until 2026-11-26 a database outage read as a wrong password.
 - **`verify-credentials` is internal only** (Caddy `@internal_only` + `assertInternalCaller`), refused while
   `auth.local.enabled` is off, and the web's Credentials `authorize()` passes the person's address in
   `X-Forwarded-For` (until 2026-10-25 it sent none, so every sign-in counted against the web container's address).
@@ -1368,8 +1386,8 @@ must keep a second node working:
 - **Load balancer contract:** `/healthz` on the proxy (200 with `X-Lampstand-Node` while
   the API reaches the database, 503 otherwise, 503 `draining` while
   `data/caddy/drain` exists; `scripts/cluster.sh drain|undrain|status`).
-  `TRUSTED_PROXIES` (the balancer's CIDRs) turns on strict `X-Forwarded-For`
-  parsing in the proxy; unset keeps the old trust-everyone behaviour on purpose.
+  Which forwarded address is the client's is decided by the API from the admin settings
+  "Trusted proxies" / "Strict proxy mode" (see "The person's address" under ## Auth flow), never by Caddy.
   The API's `/api/v1/readyz` answers 503 when degraded; keep it that way.
 - **`scripts/rebuild.sh`** rebuilds api, web and monitor and recreates/restarts the
   proxy when its config changes. A new service or a new config file needs adding

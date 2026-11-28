@@ -12,6 +12,7 @@ import { PERMISSIONS, type PermissionString } from "./permissions";
 import { DEFAULT_LOOK, LOOK_IDS } from "./dashboard/themes";
 import { INBOUND_AUTH_MODES, INBOUND_KEYS } from "./inbound-mail";
 import { contactHostProblem, contactUrlProblem } from "./contact-host";
+import { CLIENT_IP_KEYS, trustedProxiesProblem } from "./client-ip";
 import { WIKI_REVIEW_DAYS_KEY, WIKI_REVIEW_DEFAULT_DAYS, WIKI_REVIEW_MAX_DAYS } from "./wiki-pages";
 import {
   DEFAULT_ATTACHMENT_TYPES,
@@ -290,6 +291,24 @@ export const KNOWN_SETTINGS: ReadonlyArray<KnownSetting> = [
     category: "auth",
   },
   {
+    key: CLIENT_IP_KEYS.trustedProxies,
+    type: "string",
+    label: "Trusted proxies",
+    description:
+      "The addresses or subnets of the load balancer or proxy in front of this site, separated by spaces or commas (10.0.0.0/24, 192.168.1.5). The site believes the forwarded client address only from these, so the address it records and rate-limits is the person's real one. Leave blank with strict mode off to believe whatever a request claims (anyone can then pick the address the site records for them). The Security overview shows what the site currently sees for you. Applies within a few seconds.",
+    defaultValue: "",
+    category: "auth",
+  },
+  {
+    key: CLIENT_IP_KEYS.strict,
+    type: "boolean",
+    label: "Strict proxy mode",
+    description:
+      "Read the forwarded addresses from the right and take the first one that is not a trusted proxy. Use it when the proxy adds to the forwarded header rather than replacing it (nginx, HAProxy, most cloud load balancers), or with an empty list when nothing sits in front of this site. Off: the leftmost forwarded address is believed whenever the request came through a trusted proxy.",
+    defaultValue: false,
+    category: "auth",
+  },
+  {
     key: "audit.retention_days",
     type: "number",
     label: "Audit log retention (days)",
@@ -524,7 +543,7 @@ export const KNOWN_SETTINGS: ReadonlyArray<KnownSetting> = [
     type: "string",
     label: "Your mail server's name in its checks",
     description:
-      "The first word of the Authentication-Results header your mailbox provider adds (open any received message, view its source: mx.google.com for Gmail). Only checks written by that server are believed. Leave blank to believe the topmost header, which a provider that adds none would leave to the sender.",
+      "The first word of the Authentication-Results header your mailbox provider adds (open any received message, view its source: mx.google.com for Gmail). Only checks written by that server are believed. Required unless sender checks are off: while it is blank the mailbox is not read.",
     defaultValue: "",
     category: "helpdesk",
   },
@@ -1595,6 +1614,8 @@ export function validateSettingValue(key: string, value: unknown): string | null
       return typeof value === "string" && value.trim() !== "" && value.length <= 100 && !/[\u0000-\u001f]/.test(value) ? null : "Enter a folder name, for example INBOX.";
     case INBOUND_KEYS.address:
       return typeof value === "string" && (value === "" || /^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]+$/.test(value)) ? null : "Enter an email address, for example help@church.org.";
+    case CLIENT_IP_KEYS.trustedProxies:
+      return trustedProxiesProblem(value);
     case INBOUND_KEYS.authServer:
       return typeof value === "string" && /^[A-Za-z0-9.-]{0,253}$/.test(value.trim()) ? null : "Enter just the server name, for example mx.google.com.";
     case INBOUND_KEYS.auth:

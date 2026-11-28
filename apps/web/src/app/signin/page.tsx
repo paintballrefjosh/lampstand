@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { Cross, LogIn } from "lucide-react";
 import { signIn, auth, getProviderConfig } from "@/lib/auth";
 import { apiJson } from "@/lib/api";
+import { signinErrorMessage } from "@/lib/signin-failure";
 import { SignInForm } from "./signin-form";
 import { ChapelWindow } from "./chapel-window";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -22,13 +23,7 @@ export default async function SignInPage({
   if (session?.user) redirect("/");
 
   const params = await searchParams;
-  const accountDeleted =
-    params.error === "AccountDeleted" || params.code === "account_deleted";
-  const initialError = accountDeleted
-    ? "This account has been deleted. Contact an administrator."
-    : params.code === "too_many_attempts"
-      ? "Too many failed sign-in attempts for this account. Wait a few minutes and try again."
-      : params.error;
+  const initialError = signinErrorMessage(params.error, params.code);
   const needsTotp = params.totp === "1";
   const callbackUrl = params.callbackUrl ?? "/";
   const cfg = await getProviderConfig();
@@ -127,8 +122,8 @@ export default async function SignInPage({
             </p>
 
             {initialError ? (
-              <p className="mt-4 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-700 dark:bg-rose-950 dark:text-rose-300">
-                {initialError === "CredentialsSignin" ? "Invalid credentials" : initialError}
+              <p role="alert" className="mt-4 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-700 dark:bg-rose-950 dark:text-rose-300">
+                {initialError}
               </p>
             ) : null}
 

@@ -1,4 +1,5 @@
 import { cookies, headers } from "next/headers";
+import { forwardedChain } from "@lampstand/shared";
 import { CONSISTENCY_COOKIE, parseConsistencySetCookie } from "./consistency-cookie";
 
 const internal = process.env.API_INTERNAL_URL ?? "http://api:3001";
@@ -12,11 +13,11 @@ const internal = process.env.API_INTERNAL_URL ?? "http://api:3001";
  * whose content-type claims JSON but whose body is empty — this used to break
  * every body-less mutation (e.g. POST /notifications/:id/read).
  *
- * XFF forwarding: we take only the leftmost token of x-forwarded-for. The
- * Caddyfile overrides XFF with the real client IP per hop, so when we see
- * it here it's a single trusted value. If anything ever changes Caddy to
- * stop clobbering, the leftmost-token slice still keeps us from passing
- * along an attacker-supplied chain.
+ * XFF forwarding: the chain is passed on as it arrived (Caddy appends the
+ * address it was connected from); the API picks the person's entry by the
+ * trusted-proxy settings (packages/shared/src/client-ip.ts). Picking here
+ * would mean two places deciding, and the leftmost entry is the one a sender
+ * can make up.
  */
 export async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   const cookieStore = await cookies();
@@ -26,8 +27,7 @@ export async function apiFetch(path: string, init?: RequestInit): Promise<Respon
     .join("; ");
 
   const hdrs = await headers();
-  const xffRaw = hdrs.get("x-forwarded-for") ?? hdrs.get("x-real-ip") ?? "";
-  const clientIp = xffRaw.split(",")[0]?.trim() ?? "";
+  const clientIp = forwardedChain(hdrs.get("x-forwarded-for"));
 
   // The browser's own User-Agent, so the audit log and the session list say what signed in (Node's fetch would say "node").
   const userAgent = hdrs.get("user-agent") ?? "";
@@ -81,7 +81,7 @@ export async function streamToApi(req: Request, path: string): Promise<Response>
   if (contentType) hdrs["content-type"] = contentType;
   if (contentLength) hdrs["content-length"] = contentLength;
   if (cookieHeader) hdrs["cookie"] = cookieHeader;
-  const clientIp = (req.headers.get("x-forwarded-for") ?? req.headers.get("x-real-ip") ?? "").split(",")[0]?.trim() ?? "";
+  const clientIp = forwardedChain(req.headers.get("x-forwarded-for"));
   if (clientIp) hdrs["x-forwarded-for"] = clientIp;
   const userAgent = req.headers.get("user-agent");
   if (userAgent) hdrs["user-agent"] = userAgent;

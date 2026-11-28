@@ -390,6 +390,8 @@ function PrinterFormDrawer({
           port: snmpPort,
           version: snmpVersion === "" ? undefined : snmpVersion,
           community: snmpCommunity.trim() === "" ? undefined : snmpCommunity.trim(),
+          // A saved community shows as "[saved]": the API tests with the saved one.
+          ...(printer ? { printerId: printer.id } : {}),
         }),
       });
       let parsed: { ok?: boolean; message?: string } = {};
@@ -529,7 +531,7 @@ function PrinterFormDrawer({
                   ))}
                 </select>
               </Field>
-              <Field label="Community (blank = global default)">
+              <Field label="Community (blank = global default; [saved] keeps the saved one)">
                 <input
                   value={snmpCommunity}
                   onChange={(e) => setSnmpCommunity(e.target.value)}

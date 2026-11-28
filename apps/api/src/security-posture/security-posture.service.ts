@@ -5,6 +5,7 @@ import { DB, type Db } from "../db/db.module";
 import { apiTokens, backupSchedules, backups, ciscoSwitches, groupMemberships, groups, signageDevices, signageFound, users } from "../db/schema";
 import { SettingsService } from "../settings/settings.service";
 import { readMaintenance } from "../monitors/maintenance";
+import { currentClientIpPolicy } from "../auth/client-ip";
 
 const DAY_MS = 86_400_000;
 /** The seeded administrator (`admin` / `admin`), stored as this address. */
@@ -20,8 +21,17 @@ export class SecurityPostureService {
     private readonly settings: SettingsService,
   ) {}
 
-  async report(now: Date = new Date()): Promise<PostureReport> {
-    return evaluatePosture(await this.facts(now));
+  async report(now: Date = new Date(), request?: { yourAddress: string | null; yourChain: string[] }): Promise<PostureReport> {
+    const facts = await this.facts(now);
+    const policy = currentClientIpPolicy();
+    facts.clientIp = {
+      mode: policy.mode,
+      proxies: policy.cidrs.length,
+      fromEnv: policy.fromEnv,
+      yourAddress: request?.yourAddress ?? null,
+      yourChain: request?.yourChain ?? [],
+    };
+    return evaluatePosture(facts);
   }
 
   async facts(now: Date = new Date()): Promise<PostureFacts> {

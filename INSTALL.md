@@ -468,12 +468,16 @@ working as it is; it cannot be converted in place, see
   original `Host`; sets `X-Forwarded-For` and `X-Forwarded-Proto`; health-checks each node at
   `/healthz` (200 with the node's name in an `X-Lampstand-Node` header while the node's API can
   reach its database, 503 when it cannot, and 503 "draining" while the node is drained).
-- **`TRUSTED_PROXIES`**: set it in `.env` to a space-separated list of your load balancer's
-  CIDRs (`TRUSTED_PROXIES=10.0.0.0/24`). The proxy then reads `X-Forwarded-For` from the right
-  and takes the first address that is not one of yours, so audit rows and the rate limits see
-  the real client IP and a forged header cannot change it. Left unset, every peer is trusted
-  and the first entry wins, which a client can forge: acceptable only if the load balancer
-  already overwrites the header.
+- **Trusted proxies**: in Admin > Settings > Authentication, list your load balancer's
+  addresses under "Trusted proxies" (`10.0.0.0/24`) and switch on "Strict proxy mode" if it
+  adds to `X-Forwarded-For` rather than replacing it (nginx, HAProxy and most cloud load
+  balancers add). The site then reads the header from the right and takes the first address
+  that is not one of yours, so audit rows and the rate limits see the real client IP and a
+  forged header cannot change it. With nothing in front of the site, leave the list empty and
+  switch strict mode on. Left as it is (empty, strict off), the first entry wins, which a
+  client can forge; Admin > Security says so and shows the addresses your own request came
+  through. `TRUSTED_PROXIES` in `.env` (the older way to set this) still works while the
+  setting is blank.
 - **The same build on every node.** Give every node the same `AUTH_SECRET` and the same
   build: the web app's page scripts and Server Actions are named by the build, so a page
   served by one node and a request answered by another must come from the same one. Either

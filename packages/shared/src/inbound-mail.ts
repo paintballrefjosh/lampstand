@@ -168,18 +168,28 @@ function related(a: string | null, b: string | null): boolean {
 
 /**
  * Which Authentication-Results header to believe among the ones a message carries (in message order, topmost first). The
- * topmost one is the last server's; the sender can add headers of their own, but only BELOW the receiving server's. A server
- * that adds none (some do not) would leave the sender's forged one on top, so when `serverName` is set only a header written
- * by that server counts (its first word equals the name or ends with it).
+ * sender can write headers of their own, and a mail server that adds none (some do not) would leave the sender's forged
+ * one on top, so only a header written by the named server counts (its first word equals the name or ends with it). With
+ * no name nothing is believed: until 2026-11-13 a blank name meant "the topmost header", which a forged one could be.
  */
 export function pickAuthResultsHeader(headers: ReadonlyArray<string>, serverName: string): string | null {
   const want = serverName.trim().toLowerCase();
+  if (want === "") return null;
   for (const h of headers) {
-    if (want === "") return h;
     const id = parseAuthResults(h).serverId;
     if (id && (id === want || id.endsWith(`.${want}`))) return h;
   }
   return null;
+}
+
+/**
+ * Why the mailbox cannot be read with these settings, or null. Sender checks need the mail server's name: without it no
+ * check can be believed, so every message would be skipped as unconfirmed (and, being logged by Message-ID, never looked
+ * at again). The job stops before reading anything instead, and catches up once the name is filled in.
+ */
+export function inboundAuthServerProblem(mode: InboundAuthMode, serverName: string): string | null {
+  if (mode === "off" || serverName.trim() !== "") return null;
+  return 'Sender checks are on but "Your mail server\'s name in its checks" is blank, so no message can be confirmed. Fill it in (for example mx.google.com); nothing is read until then.';
 }
 
 /**
