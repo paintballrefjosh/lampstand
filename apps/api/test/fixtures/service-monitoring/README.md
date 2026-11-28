@@ -21,6 +21,12 @@ Captured for wave two (2026-10-26, throwaway containers unless said otherwise):
 - `garage-metrics.txt`: Garage v2.1.0 `/metrics` from the dev stack's store, cut down to the families the template keeps.
 - `meilisearch-*.json`: Meilisearch 1.10.3 `/health`, `/stats` and `/tasks` from the dev stack.
 
+Captured from a real server (2026-11-28):
+
+- `mdadm-detail-raid5-healthy.txt`: `mdadm --detail /dev/md0` on a healthy 5-disk RAID 5 (host name and UUID replaced). No
+  template reads it yet (TODO.md).
+- `mdstat-raid5-healthy.txt`: `/proc/mdstat` of the same array, as pasted (without the `Personalities` line).
+
 Written from the vendor's documentation (no server was run):
 
 - `mdstat.txt`: `/proc/mdstat` with a RAID 5 missing a disk and recovering, and a healthy RAID 1, in the format of the kernel's md
