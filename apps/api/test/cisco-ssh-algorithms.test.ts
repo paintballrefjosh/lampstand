@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { AddressInfo } from "node:net";
 import { Server, utils } from "ssh2";
 import { sshShell } from "../src/cisco/ssh";
+import { testHostKey } from "./helpers/ssh-host-key";
 
 /**
  * A switch that speaks both modern and ancient SSH. The client's list order decides which one is used (RFC 4253: the
@@ -16,7 +17,7 @@ interface Negotiated {
 }
 
 function startServer() {
-  const pair = utils.generateKeyPairSync("ed25519");
+  const pair = testHostKey();
   let negotiated: Negotiated | null = null;
   const server = new Server(
     {
