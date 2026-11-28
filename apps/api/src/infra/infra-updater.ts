@@ -29,7 +29,12 @@ import {
   validSudoUser,
 } from "./sudo-access";
 import type { AuthenticatedUser } from "../auth/current-user.decorator";
-import type { CreateInfraUpdateRunInput, InfraUpdateRun } from "@lampstand/shared";
+import {
+  DEFAULT_INFRA_UPDATE_RUN_OPTIONS,
+  type CreateInfraUpdateRunInput,
+  type InfraUpdateRun,
+  type InfraUpdateRunOptions,
+} from "@lampstand/shared";
 
 // A real fleet upgrade (apt-get update + upgrade across however many
 // packages) can legitimately run long, especially the first time in a while
@@ -167,6 +172,25 @@ export class InfraUpdaterService implements OnModuleInit {
       .orderBy(desc(infraUpdateRuns.startedAt))
       .limit(10);
     return rows.map((r) => toRun(r.run, r.triggeredByName ?? r.triggeredByEmail ?? null));
+  }
+
+  /**
+   * What the "Run updates" dialog starts with: the choices of the most recent run on ANY host, whoever started it.
+   * Read from the run history, so there is nothing separate to save. With no run to go by (none yet, or all removed
+   * by retention or with their hosts) it is the built-in default.
+   */
+  async lastRunOptions(): Promise<InfraUpdateRunOptions> {
+    const [last] = await this.db
+      .select({
+        reboot: infraUpdateRuns.rebootRequested,
+        fullUpgrade: infraUpdateRuns.fullUpgrade,
+        includePhased: infraUpdateRuns.includePhased,
+        cleanup: infraUpdateRuns.cleanup,
+      })
+      .from(infraUpdateRuns)
+      .orderBy(desc(infraUpdateRuns.startedAt))
+      .limit(1);
+    return last ?? DEFAULT_INFRA_UPDATE_RUN_OPTIONS;
   }
 
   /**

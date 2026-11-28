@@ -6,6 +6,7 @@ import {
   dnsRecordCreateSchema,
   dnsRecordUpdateSchema,
   dnsRecordDeleteSchema,
+  dnsPtrQuerySchema,
   dnsSyncRunSchema,
   dnsReverseZoneCreateSchema,
   dnsHealthMonitorsSchema,
@@ -56,6 +57,15 @@ export class DnsController {
   @RequirePermissions(READ)
   records(@Param("zone") zone: string) {
     return this.dns.records(zone);
+  }
+
+  /** The reverse record of one address, shown before an A record is deleted. */
+  @Get("ptr")
+  @RequirePermissions(READ)
+  ptr(@Query() query: unknown) {
+    const parsed = dnsPtrQuerySchema.safeParse(query ?? {});
+    if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
+    return this.dns.ptrState(parsed.data.ip);
   }
 
   @Post("zones/:zone/records")

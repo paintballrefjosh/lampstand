@@ -357,13 +357,13 @@ export const MONITORING_TOOLS = [
   defineTool({
     name: "printers_list",
     title: "List printers",
-    description: "Every printer with its status (green, yellow, red, unknown) and the readings from its last SNMP poll. The SNMP community is hidden.",
+    description: "Every printer with its status (green, yellow, red, unknown) and the readings from its last SNMP poll. The SNMP community and Fiery API key are hidden.",
     cls: "read",
     method: "GET",
     path: "/printers",
     permissions: [PERMISSIONS.PRINTERS_READ_ANY],
     input: z.object({}),
-    redact: ["snmpCommunity"],
+    redact: ["snmpCommunity", "fieryApiKey"],
   }),
   defineTool({
     name: "printers_get_summary",
@@ -378,13 +378,13 @@ export const MONITORING_TOOLS = [
   defineTool({
     name: "printers_get",
     title: "Read a printer",
-    description: "One printer with the readings from its last poll and its last error. The SNMP community is hidden.",
+    description: "One printer with the readings from its last poll and its last error. The SNMP community and Fiery API key are hidden.",
     cls: "read",
     method: "GET",
     path: "/printers/:id",
     permissions: [PERMISSIONS.PRINTERS_READ_ANY],
     input: z.object({ id }),
-    redact: ["snmpCommunity"],
+    redact: ["snmpCommunity", "fieryApiKey"],
   }),
 
   // ---- UPS ----

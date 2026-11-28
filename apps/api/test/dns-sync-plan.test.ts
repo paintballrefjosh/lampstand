@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DNS_MANAGED_MARKER } from "@lampstand/shared";
+import { DNS_MANAGED_MARKER, dnsRecordCreateSchema, hasManagedMarker } from "@lampstand/shared";
 import {
   computeSyncPlan,
   toDnsLabel,
@@ -210,5 +210,16 @@ describe("computeSyncPlan", () => {
     const existing = [rec("int.example.org", "a.int.example.org", "A", "10.10.1.1"), rec("int.example.org", "b.int.example.org", "A", "10.10.1.2")];
     const p = plan({ ptr: false, hosts: [], existing });
     expect(p.blocked).toBeNull();
+  });
+});
+
+describe("DNS managed marker", () => {
+  it("is recognised in a comment, and refused in a hand-made record's comment", () => {
+    expect(hasManagedMarker(`note (${DNS_MANAGED_MARKER})`)).toBe(true);
+    expect(hasManagedMarker("hand-made")).toBe(false);
+    expect(hasManagedMarker(null)).toBe(false);
+    const base = { name: "a", ttl: 300, data: { type: "A", ipAddress: "10.0.0.1" } };
+    expect(dnsRecordCreateSchema.safeParse({ ...base, comments: "mine" }).success).toBe(true);
+    expect(dnsRecordCreateSchema.safeParse({ ...base, comments: DNS_MANAGED_MARKER }).success).toBe(false);
   });
 });

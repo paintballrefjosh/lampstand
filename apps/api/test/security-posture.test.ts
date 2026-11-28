@@ -107,13 +107,27 @@ describe("security posture", () => {
     expect(byId(evaluatePosture(facts({ backups: { lastReadyAt: NOW - 3 * 3_600_000, scheduleEnabled: true } })), "backups")?.title).toBe("Last backup today");
   });
 
-  it("helpdesk email: silent while off, warns when it believes the From line, notes an unnamed server, ok when pinned", () => {
+  it("helpdesk email: silent while off, warns when it believes the From line or names no server (nothing is read), ok when pinned", () => {
     const check = (h: Partial<PostureFacts["helpdeskEmail"]>) =>
       byId(evaluatePosture(facts({ helpdeskEmail: { enabled: true, auth: "strict", authServerSet: true, ...h } })), "helpdesk-email");
     expect(byId(evaluatePosture(facts()), "helpdesk-email")).toBeUndefined();
     expect(check({ auth: "off" })).toMatchObject({ severity: "warn" });
-    expect(check({ auth: "aligned", authServerSet: false })).toMatchObject({ severity: "info" });
+    expect(check({ auth: "aligned", authServerSet: false })).toMatchObject({ severity: "warn" });
     expect(check({ authServerSet: true })).toMatchObject({ severity: "ok" });
+  });
+
+  it("client address: warns while any claim is believed, notes the standard mode, ok when strict, shows the admin's own chain", () => {
+    const check = (c: Partial<NonNullable<PostureFacts["clientIp"]>>) =>
+      byId(evaluatePosture(facts({ clientIp: { mode: "strict", proxies: 1, fromEnv: false, yourAddress: "203.0.113.9", yourChain: [], ...c } })), "client-ip");
+    expect(byId(evaluatePosture(facts()), "client-ip")).toBeUndefined();
+    const any = check({ mode: "any", proxies: 0, yourAddress: "10.66.3.7", yourChain: ["10.66.3.7", "203.0.113.9"] });
+    expect(any).toMatchObject({ severity: "warn", title: "Anyone can choose the address the site records for them", fix: { href: "/admin/settings/auth" } });
+    expect(any?.detail).toContain("10.66.3.7 -> 203.0.113.9");
+    expect(any?.detail).toContain("recorded 10.66.3.7");
+    expect(check({ mode: "standard", proxies: 2 })).toMatchObject({ severity: "info", title: "The forwarded address is believed from 2 trusted proxies" });
+    expect(check({ mode: "strict", proxies: 0 })?.detail).toContain("connecting address");
+    expect(check({ mode: "strict", proxies: 1, fromEnv: true })).toMatchObject({ severity: "ok" });
+    expect(check({ mode: "strict", proxies: 1, fromEnv: true })?.detail).toContain("TRUSTED_PROXIES");
   });
 
   it("backup checks: failing newest is critical, failing older warns, unchecked warns after a day, fresh is ok", () => {

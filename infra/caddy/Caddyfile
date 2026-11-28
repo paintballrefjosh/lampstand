@@ -3,19 +3,17 @@
 	# We listen plain HTTP on :8100 only; no auto-TLS.
 	auto_https off
 
-	# Which peers may set X-Forwarded-For / -Proto / -Host. TRUSTED_PROXIES is a
-	# space-separated list of CIDRs: set it to your load balancer's addresses so the
-	# client IP in the audit log and the rate limits is the real one and cannot be
-	# spoofed with a forged header. When it is set, compose also turns on
-	# `trusted_proxies_strict` (TRUSTED_PROXIES_STRICT), which reads the header right
-	# to left and takes the first address that is not a trusted proxy, so entries a
-	# client adds on the left are never believed.
+	# Which peers' X-Forwarded-For / -Proto / -Host are passed on. Caddy does NOT
+	# decide which address is the person's: it keeps the incoming X-Forwarded-For of
+	# a trusted peer and appends the address it was connected from (an untrusted
+	# peer's header is replaced by that address), and the API picks the entry by the
+	# admin's "Trusted proxies" and "Strict proxy mode" settings (Admin > Settings >
+	# Authentication; packages/shared/src/client-ip.ts). So never set
+	# X-Forwarded-For with header_up here: that would hide the chain from the API.
 	#
-	# Unset, the default trusts every peer and takes the leftmost entry, as before:
-	# fine only when something upstream already overwrites X-Forwarded-For (a client
-	# can otherwise choose the IP that is logged). Strict mode is not on by default
-	# because with everything trusted it would report the proxy's own address for
-	# every user.
+	# TRUSTED_PROXIES in .env (the older way to configure this) narrows which peers
+	# Caddy believes at all, and the API uses it while the setting is blank. Unset,
+	# every peer is passed on and the settings decide.
 	servers {
 		trusted_proxies static {$TRUSTED_PROXIES:0.0.0.0/0}
 		{$TRUSTED_PROXIES_STRICT:}
@@ -106,7 +104,6 @@
 	handle /api/v1/assistant/chat {
 		reverse_proxy api:3001 {
 			header_up Host {host}
-			header_up X-Forwarded-For {client_ip}
 			flush_interval -1
 		}
 	}
@@ -114,31 +111,18 @@
 	handle /api/v1/* {
 		reverse_proxy api:3001 {
 			header_up Host {host}
-			# Clobber X-Forwarded-For with the client's real IP. Without this,
-			# a malicious client can spoof XFF at the edge and have the api
-			# log a chosen IP in audit_log. (If an HTTPS LB is upstream of
-			# Caddy and itself sets a trustworthy XFF, point Caddy at it
-			# via `trusted_proxies` and remove this override.)
-			header_up X-Forwarded-For {client_ip}
 		}
 	}
 
 	handle /socket.io/* {
 		reverse_proxy api:3001 {
 			header_up Host {host}
-			# Clobber X-Forwarded-For with the client's real IP. Without this,
-			# a malicious client can spoof XFF at the edge and have the api
-			# log a chosen IP in audit_log. (If an HTTPS LB is upstream of
-			# Caddy and itself sets a trustworthy XFF, point Caddy at it
-			# via `trusted_proxies` and remove this override.)
-			header_up X-Forwarded-For {client_ip}
 		}
 	}
 
 	handle {
 		reverse_proxy web:3000 {
 			header_up Host {host}
-			header_up X-Forwarded-For {client_ip}
 		}
 	}
 }

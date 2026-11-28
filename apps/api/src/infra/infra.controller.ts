@@ -170,6 +170,13 @@ export class InfraController {
     return this.infra.delete(id);
   }
 
+  /** The checkbox choices of the last run on any host, to pre-tick the "Run updates" dialog. */
+  @Get("update-run-defaults")
+  @RequirePermissions(PERMISSIONS.MONITORS_READ_ANY)
+  updateRunDefaults() {
+    return this.updater.lastRunOptions();
+  }
+
   @Get("targets/:id/update-runs")
   @RequirePermissions(PERMISSIONS.MONITORS_READ_ANY)
   updateRuns(@Param("id") id: string) {

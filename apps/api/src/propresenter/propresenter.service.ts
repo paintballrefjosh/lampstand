@@ -1,5 +1,15 @@
 import { Injectable, Logger, ServiceUnavailableException } from "@nestjs/common";
+import { contactHostProblem } from "@lampstand/shared";
 import { SettingsService } from "../settings/settings.service";
+import { outboundBlockedMessage, outboundFetch } from "../net/outbound";
+
+/** The URL for one call, or null when the host is not a plain host name or address (a path or fragment in it would choose where the call goes). */
+export function propresenterUrl(host: string, port: number, path: string): string | null {
+  const h = host.trim();
+  if (!/^[A-Za-z0-9.-]{1,253}$/.test(h) || contactHostProblem(h, { allowShortNames: true })) return null;
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
+  return `http://${h}:${port}${path}`;
+}
 
 interface PpConfig {
   host: string;
@@ -45,7 +55,8 @@ export class PropresenterService {
     if (!cfg) {
       throw new ServiceUnavailableException("ProPresenter is not configured");
     }
-    const url = `http://${cfg.host}:${cfg.port}${path}`;
+    const url = propresenterUrl(cfg.host, cfg.port, path);
+    if (!url) throw new ServiceUnavailableException("The ProPresenter host or port in the settings is not valid");
     const headers: Record<string, string> = { accept: "application/json" };
     if (cfg.password) {
       headers["authorization"] = `Basic ${Buffer.from(`:${cfg.password}`).toString("base64")}`;
@@ -53,7 +64,7 @@ export class PropresenterService {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 5_000);
     try {
-      const res = await fetch(url, { method, headers, signal: controller.signal });
+      const res = await outboundFetch(url, { method, headers, signal: controller.signal, allowShortNames: true });
       if (!res.ok) {
         throw new ServiceUnavailableException(`ProPresenter ${res.status} ${res.statusText}`);
       }
@@ -66,7 +77,7 @@ export class PropresenterService {
       }
       this.logger.debug(`ProPresenter ${method} ${path} failed: ${(err as Error).message}`);
       throw new ServiceUnavailableException(
-        `ProPresenter unreachable: ${(err as Error).message}`,
+        `ProPresenter unreachable: ${outboundBlockedMessage(err) ?? (err as Error).message}`,
       );
     } finally {
       clearTimeout(timer);
@@ -95,7 +106,8 @@ export class PropresenterService {
     // to whatever's saved (the form shows "(unchanged)" placeholder for this).
     const password = overrides.password || stored?.password || "";
     if (!host) return { ok: false, message: "Host is required" };
-    const url = `http://${host}:${port}/version`;
+    const url = propresenterUrl(host, port, "/version");
+    if (!url) return { ok: false, message: "Enter just the host name or address (no http://, port or path), and a port from 1 to 65535." };
     const headers: Record<string, string> = { accept: "application/json" };
     if (password) {
       headers["authorization"] = `Basic ${Buffer.from(`:${password}`).toString("base64")}`;
@@ -103,7 +115,7 @@ export class PropresenterService {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 5_000);
     try {
-      const res = await fetch(url, { method: "GET", headers, signal: controller.signal });
+      const res = await outboundFetch(url, { method: "GET", headers, signal: controller.signal, allowShortNames: true });
       if (!res.ok) {
         return { ok: false, message: `Connected, but server returned HTTP ${res.status} ${res.statusText}` };
       }
@@ -120,7 +132,7 @@ export class PropresenterService {
     } catch (err) {
       const e = err as { name?: string; message?: string };
       if (e.name === "AbortError") return { ok: false, message: "Connection timed out" };
-      return { ok: false, message: e.message || String(err) };
+      return { ok: false, message: outboundBlockedMessage(err) ?? (e.message || String(err)) };
     } finally {
       clearTimeout(timer);
     }

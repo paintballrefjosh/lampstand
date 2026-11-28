@@ -6,13 +6,13 @@ import {
   NotFoundException,
   ServiceUnavailableException,
 } from "@nestjs/common";
-import { Agent } from "undici";
 import { eq, inArray } from "drizzle-orm";
 import { DB, type Db } from "../db/db.module";
 import { unifiDeviceAcks, unifiDeviceViews } from "../db/schema";
 import { checkDeviceProfile } from "../switch-models/check-profile";
 import type { SetSwitchViewInput, CreateUnifiVouchersInput, UnifiCamera, UnifiCamerasReply, UnifiNetworkLike, UnifiProfileLike, UnifiVoucher } from "@lampstand/shared";
 import { SettingsService } from "../settings/settings.service";
+import { outboundBlockedMessage, outboundFetch } from "../net/outbound";
 
 /** Normalise a MAC for storage/comparison — controllers report lowercase, but
  * be defensive about whatever the client echoes back into the ack URL. */
@@ -92,6 +92,8 @@ const REQUEST_TIMEOUT_MS = 8_000;
  * on the Network page and the Test button.
  */
 function describeFetchError(err: unknown): Error {
+  const blocked = outboundBlockedMessage(err);
+  if (blocked) return new Error(blocked);
   const e = err as { message?: string; cause?: { code?: string; message?: string } };
   const cause = e?.cause;
   if (cause?.code === "DEPTH_ZERO_SELF_SIGNED_CERT" || cause?.code === "SELF_SIGNED_CERT_IN_CHAIN") {
@@ -228,11 +230,8 @@ export class UnifiService {
       accept: "application/json",
       ...(post !== undefined ? { "content-type": "application/json" } : {}),
     };
-    // Node's global `fetch` is undici-based and IGNORES the legacy `agent`
-    // option — the only way to scope a TLS-verify override to this request is
-    // an undici `Agent` passed as `dispatcher`. Controllers ship a self-signed
-    // cert by default, so `verify_tls` is off unless the operator opts in.
-    const dispatcher = new Agent({ connect: { rejectUnauthorized: cfg.verifyTls } });
+    // Controllers ship a self-signed cert by default, so `verify_tls` is off unless the operator opts in. `outboundFetch`
+    // scopes that to this request and refuses an address that is this machine, link-local or one of the stack's containers.
     const candidates = [
       `${cfg.baseUrl}/proxy/network/api/${path}`,
       `${cfg.baseUrl}/api/${path}`,
@@ -242,13 +241,14 @@ export class UnifiService {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
       try {
-        const res = await fetch(url, {
+        const res = await outboundFetch(url, {
           method: post !== undefined ? "POST" : "GET",
           headers,
           ...(post !== undefined ? { body: JSON.stringify(post) } : {}),
-          dispatcher,
+          verifyTls: cfg.verifyTls,
+          allowShortNames: true,
           signal: controller.signal,
-        } as RequestInit & { dispatcher: Agent });
+        });
         if (res.status === 404) continue;
         if (!res.ok) {
           throw new ServiceUnavailableException(`UniFi ${res.status} ${res.statusText}`);
@@ -287,11 +287,12 @@ export class UnifiService {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
-      const res = await fetch(`${cfg.baseUrl}/proxy/protect/integration/v1/cameras`, {
+      const res = await outboundFetch(`${cfg.baseUrl}/proxy/protect/integration/v1/cameras`, {
         headers: { "X-API-Key": cfg.apiKey, accept: "application/json" },
-        dispatcher: new Agent({ connect: { rejectUnauthorized: cfg.verifyTls } }),
+        verifyTls: cfg.verifyTls,
+        allowShortNames: true,
         signal: controller.signal,
-      } as RequestInit & { dispatcher: Agent });
+      });
       if (res.status === 404) return { enabled: true, cameras: [], error: "This console has no UniFi Protect (or its integration API is not available)." };
       if (!res.ok) return { enabled: true, cameras: [], error: `Protect answered ${res.status} ${res.statusText}` };
       const data = (await res.json()) as unknown;

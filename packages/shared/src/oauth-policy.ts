@@ -77,3 +77,29 @@ export function isWorkspaceMember(input: { email: string; domain: string; hosted
   if (input.hostedDomain === undefined) return true;
   return input.hostedDomain.trim().toLowerCase() === domain;
 }
+
+/**
+ * Whether a provider's email address may be used to attach a first-time sign-in to an EXISTING account
+ * (an admin created it, or the person made it with a password). Linking by email is only as safe as the
+ * provider's promise that the address belongs to the person signing in, so each provider says how far it
+ * can be believed:
+ *   - `verified-claim`: the provider reports the address as verified. The `signIn` callback has already
+ *     refused a sign-in without that claim (`googleSignInDecision`) by the time Auth.js links.
+ *   - `single-tenant-only`: the address is a free attribute of the person's directory, so it is only
+ *     believed when that directory is the one we chose (every account comes from our own tenant).
+ *   - `never`: the address is never enough. The person signs in first and links from their profile.
+ * An unknown provider is `never`: a new one must be added here, on purpose.
+ */
+export type EmailLinkTrust = "verified-claim" | "single-tenant-only" | "never";
+
+export const OAUTH_EMAIL_TRUST: Readonly<Record<string, EmailLinkTrust>> = {
+  google: "verified-claim",
+  "microsoft-entra-id": "single-tenant-only",
+};
+
+export function mayLinkByEmail(provider: string, cfg: { tenant?: string | null } = {}): boolean {
+  const trust = Object.prototype.hasOwnProperty.call(OAUTH_EMAIL_TRUST, provider) ? OAUTH_EMAIL_TRUST[provider] : "never";
+  if (trust === "verified-claim") return true;
+  if (trust === "single-tenant-only") return isSingleTenant(cfg.tenant);
+  return false;
+}

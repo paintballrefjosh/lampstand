@@ -11,7 +11,8 @@ import { z } from "zod";
 import { PERMISSIONS, type PermissionString } from "./permissions";
 import { DEFAULT_LOOK, LOOK_IDS } from "./dashboard/themes";
 import { INBOUND_AUTH_MODES, INBOUND_KEYS } from "./inbound-mail";
-import { contactHostProblem } from "./contact-host";
+import { contactHostProblem, contactUrlProblem } from "./contact-host";
+import { CLIENT_IP_KEYS, trustedProxiesProblem } from "./client-ip";
 import { WIKI_REVIEW_DAYS_KEY, WIKI_REVIEW_DEFAULT_DAYS, WIKI_REVIEW_MAX_DAYS } from "./wiki-pages";
 import {
   DEFAULT_ATTACHMENT_TYPES,
@@ -290,6 +291,24 @@ export const KNOWN_SETTINGS: ReadonlyArray<KnownSetting> = [
     category: "auth",
   },
   {
+    key: CLIENT_IP_KEYS.trustedProxies,
+    type: "string",
+    label: "Trusted proxies",
+    description:
+      "The addresses or subnets of the load balancer or proxy in front of this site, separated by spaces or commas (10.0.0.0/24, 192.168.1.5). The site believes the forwarded client address only from these, so the address it records and rate-limits is the person's real one. Leave blank with strict mode off to believe whatever a request claims (anyone can then pick the address the site records for them). The Security overview shows what the site currently sees for you. Applies within a few seconds.",
+    defaultValue: "",
+    category: "auth",
+  },
+  {
+    key: CLIENT_IP_KEYS.strict,
+    type: "boolean",
+    label: "Strict proxy mode",
+    description:
+      "Read the forwarded addresses from the right and take the first one that is not a trusted proxy. Use it when the proxy adds to the forwarded header rather than replacing it (nginx, HAProxy, most cloud load balancers), or with an empty list when nothing sits in front of this site. Off: the leftmost forwarded address is believed whenever the request came through a trusted proxy.",
+    defaultValue: false,
+    category: "auth",
+  },
+  {
     key: "audit.retention_days",
     type: "number",
     label: "Audit log retention (days)",
@@ -524,7 +543,7 @@ export const KNOWN_SETTINGS: ReadonlyArray<KnownSetting> = [
     type: "string",
     label: "Your mail server's name in its checks",
     description:
-      "The first word of the Authentication-Results header your mailbox provider adds (open any received message, view its source: mx.google.com for Gmail). Only checks written by that server are believed. Leave blank to believe the topmost header, which a provider that adds none would leave to the sender.",
+      "The first word of the Authentication-Results header your mailbox provider adds (open any received message, view its source: mx.google.com for Gmail). Only checks written by that server are believed. Required unless sender checks are off: while it is blank the mailbox is not read.",
     defaultValue: "",
     category: "helpdesk",
   },
@@ -1576,12 +1595,27 @@ export function validateSettingValue(key: string, value: unknown): string | null
     case INBOUND_KEYS.host:
       if (typeof value !== "string" || !/^[A-Za-z0-9.-]{0,253}$/.test(value.trim())) return "Enter just the host name, without a scheme, port or path.";
       return contactHostProblem(value);
+    // Connectors the dashboard reaches out to on the church network. A one-word name is still accepted (these have always been
+    // typed that way: `pp7-mac`, `unifi`), but never this machine, link-local or one of the stack's own containers; the
+    // connecting code asks again on the address DNS gives (`outboundFetch` in the API).
+    case "propresenter.host":
+      if (typeof value !== "string") return "Enter just the host name or address, without a scheme, port or path.";
+      if (value.trim() !== "" && !/^[A-Za-z0-9.-]{1,253}$/.test(value.trim())) return "Enter just the host name or address, without a scheme, port or path.";
+      return contactHostProblem(value, { allowShortNames: true });
+    case "propresenter.port":
+      return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 65535 ? null : "Enter a port from 1 to 65535.";
+    case "unifi.controller_url":
+    case "dns.primary_url":
+      if (typeof value !== "string") return "Enter a web address, like https://192.168.1.1.";
+      return contactUrlProblem(value, { allowShortNames: true });
     case INBOUND_KEYS.port:
       return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 65535 ? null : "Enter a port from 1 to 65535.";
     case INBOUND_KEYS.mailbox:
       return typeof value === "string" && value.trim() !== "" && value.length <= 100 && !/[\u0000-\u001f]/.test(value) ? null : "Enter a folder name, for example INBOX.";
     case INBOUND_KEYS.address:
       return typeof value === "string" && (value === "" || /^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]+$/.test(value)) ? null : "Enter an email address, for example help@church.org.";
+    case CLIENT_IP_KEYS.trustedProxies:
+      return trustedProxiesProblem(value);
     case INBOUND_KEYS.authServer:
       return typeof value === "string" && /^[A-Za-z0-9.-]{0,253}$/.test(value.trim()) ? null : "Enter just the server name, for example mx.google.com.";
     case INBOUND_KEYS.auth:
@@ -1618,7 +1652,7 @@ export function validateSettingValue(key: string, value: unknown): string | null
       }
       if (u.protocol !== "http:" && u.protocol !== "https:") return "Only http and https addresses.";
       if (u.username || u.password) return "Put the key in the API key field, not in the address.";
-      if (isForbiddenAlertAddress(u.hostname)) return "That address is link-local (where cloud metadata services live) and is not allowed.";
+      if (isForbiddenAlertAddress(u.hostname)) return "That address is this machine or link-local (where cloud metadata services live) and is not allowed.";
       return null;
     }
     case ASSISTANT_KEYS.model:

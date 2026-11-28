@@ -7,7 +7,7 @@ diff --git a/errors.js b/errors.js
    constructor(query, params, cause) {
 -    super(`Failed query: ${query}
 -params: ${params}`);
-+    // church-dashboard patch: the message is the database's own (never the parameters, which hold row values and
++    // lampstand patch: the message is the database's own (never the parameters, which hold row values and
 +    // ended up in logs and in errors shown to people), and pg's SQLSTATE stays on `code` as before drizzle 0.45.
 +    super(cause && typeof cause.message === "string" && cause.message ? cause.message : `Failed query: ${query}`);
 +    if (cause && typeof cause.code === "string") this.code = cause.code;
@@ -23,7 +23,7 @@ diff --git a/errors.cjs b/errors.cjs
    constructor(query, params, cause) {
 -    super(`Failed query: ${query}
 -params: ${params}`);
-+    // church-dashboard patch: the message is the database's own (never the parameters, which hold row values and
++    // lampstand patch: the message is the database's own (never the parameters, which hold row values and
 +    // ended up in logs and in errors shown to people), and pg's SQLSTATE stays on `code` as before drizzle 0.45.
 +    super(cause && typeof cause.message === "string" && cause.message ? cause.message : `Failed query: ${query}`);
 +    if (cause && typeof cause.code === "string") this.code = cause.code;

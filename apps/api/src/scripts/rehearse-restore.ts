@@ -8,7 +8,7 @@ import { databaseUrl } from "../db/connection";
 import { gunzipped } from "../backup/archive";
 import { computeDiff } from "../backup/backup-diff";
 import { S3ObjectStore } from "../backup/object-store";
-import { acceptedSecretFingerprints, secretFingerprint } from "../backup/backup.service";
+import { secretFingerprint } from "../backup/backup.service";
 
 /**
  * Helper for tests/cluster/verify-restore.sh, run inside a node of the THROWAWAY cluster (never the live stack):
@@ -40,7 +40,6 @@ async function main(): Promise<number> {
         backup: { id: "rehearsal", name: arg, createdAt: new Date().toISOString() },
         archive: () => gunzipped(createReadStream(arg)),
         secretFingerprint: secretFingerprint(),
-        acceptedSecretFingerprints: acceptedSecretFingerprints(),
         userId: null,
         scope: null,
       },

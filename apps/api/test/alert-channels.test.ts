@@ -91,6 +91,26 @@ describe("where an alert may go", () => {
     expect(alertDestinationProblem("webhook", "https://user:pass@example.org/")).not.toBeNull();
     expect(alertDestinationProblem("webhook", "file:///etc/passwd")).not.toBeNull();
   });
+  it("never this machine or one of the stack's own containers (the reply is read back on the channel)", () => {
+    for (const url of [
+      "http://127.0.0.1:3001/api/v1/readyz",
+      "http://localhost:3001/",
+      "http://[::1]:3001/",
+      "http://[::ffff:127.0.0.1]/",
+      "http://[::127.0.0.1]/",
+      "http://2130706433/",
+      "http://0x7f.1/",
+      "http://api:3001/",
+      "http://garage:3900/",
+      "http://cockroach:8080/",
+      "http://metadata.google.internal/",
+    ]) {
+      expect(alertDestinationProblem("webhook", url), url).not.toBeNull();
+      expect(alertDestinationProblem("ntfy", url), url).not.toBeNull();
+    }
+    expect(alertDestinationProblem("ntfy", "https://ntfy.sh")).toBeNull();
+    expect(alertDestinationProblem("webhook", "http://192.168.1.50:8080/hook")).toBeNull();
+  });
 });
 
 describe("createAlertChannelSchema", () => {

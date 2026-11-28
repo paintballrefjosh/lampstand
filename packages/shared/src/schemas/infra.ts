@@ -534,3 +534,14 @@ export const createInfraUpdateRunSchema = z.object({
   path: ["sudoPassword"],
 });
 export type CreateInfraUpdateRunInput = z.infer<typeof createInfraUpdateRunSchema>;
+
+/** The checkboxes of the "Run updates" dialog. */
+export type InfraUpdateRunOptions = Pick<CreateInfraUpdateRunInput, "reboot" | "fullUpgrade" | "includePhased" | "cleanup">;
+
+/** How the dialog starts before any update has ever been run. */
+export const DEFAULT_INFRA_UPDATE_RUN_OPTIONS: InfraUpdateRunOptions = {
+  reboot: true,
+  fullUpgrade: false,
+  includePhased: false,
+  cleanup: false,
+};

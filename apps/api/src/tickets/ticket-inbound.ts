@@ -18,6 +18,7 @@ import {
   cleanSubject,
   contactHostProblem,
   inboundAuthMode,
+  inboundAuthServerProblem,
   pickAuthResultsHeader,
   senderAuthenticated,
   stripQuotedReply,
@@ -231,6 +232,9 @@ export class TicketInbound implements OnModuleInit {
 
   /** Connect and handle new mail; returns how many messages were looked at. */
   private async poll(cfg: InboundConfig): Promise<number> {
+    // Stop before reading: a message read now could only be skipped as unconfirmed, and the log would never look at it again.
+    const authProblem = inboundAuthServerProblem(cfg.auth, cfg.authServer);
+    if (authProblem) throw new Error(authProblem);
     await assertMailboxHost(cfg.host);
     const client = this.client(cfg);
     await client.connect();

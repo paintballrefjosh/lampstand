@@ -24,6 +24,8 @@ const testBodySchema = z.object({
   port: z.number().int().min(1).max(65535).optional(),
   version: z.enum(["v1", "v2c"]).optional(),
   community: z.string().max(64).optional(),
+  /** With community "[saved]": test with this printer's saved community. */
+  printerId: z.string().uuid().optional(),
   timeoutMs: z.number().int().min(500).max(30_000).optional(),
 });
 

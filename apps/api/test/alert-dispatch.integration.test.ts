@@ -6,6 +6,7 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import * as schema from "../src/db/schema";
 import { AlertChannelsService } from "../src/alerts/alert-channels.service";
 import { AlertDispatch } from "../src/alerts/alert-dispatch";
+import { lanAddress } from "./lan-address";
 
 /**
  * The alert outbox against a real database (CockroachDB and YugabyteDB, `TEST_DATABASE_URL` pointing at a migrated scratch
@@ -35,8 +36,10 @@ describe.skipIf(!url)("alert dispatch against a real database", () => {
         res.writeHead(204).end();
       });
     });
-    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
-    hookUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/hook`;
+    // Not loopback: the sender refuses to connect to this machine itself.
+    const lan = lanAddress();
+    await new Promise<void>((r) => server.listen(0, lan, r));
+    hookUrl = `http://${lan}:${(server.address() as AddressInfo).port}/hook`;
     const settings = { get: async (k: string) => (k === "site.name" ? "Test Church" : undefined), publicBaseUrl: async () => "https://dash.test" };
     const notifications = { createMany: async (rows: Array<Record<string, unknown>>) => void fannedOut.push(rows) };
     const infra = { monitoringRecipientIds: async () => ["u1", "u2"] };
@@ -104,7 +107,7 @@ describe.skipIf(!url)("alert dispatch against a real database", () => {
   });
 
   it("a failing channel is recorded on it and does not stop the alert being marked sent", async () => {
-    await channels.create({ name: "Dead", type: "webhook", enabled: true, events: "outages", config: { url: "http://127.0.0.1:9/nothing" } });
+    await channels.create({ name: "Dead", type: "webhook", enabled: true, events: "outages", config: { url: "http://dead-hook.invalid:9/nothing" } });
     await q(`INSERT INTO alert_outbox (kind, title, fanout) VALUES ('monitor.incident.opened', 'Down', false)`);
     expect(await dispatch.runOnce()).toMatchObject({ sent: 1 });
     const [ch] = await channels.list();

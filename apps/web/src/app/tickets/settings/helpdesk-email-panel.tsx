@@ -115,9 +115,9 @@ export function HelpdeskEmailPanel({ initial }: { initial: InboundStatus | null 
         </p>
       ) : null}
       {status.enabled && status.auth !== "off" && status.authServer === "" ? (
-        <p className="rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:text-slate-300">
-          Tip: fill in &quot;Your mail server&apos;s name in its checks&quot; below. Without it, a mail provider that adds no check of its own would leave the
-          sender&apos;s forged one to be believed.
+        <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+          No mail is being read: fill in &quot;Your mail server&apos;s name in its checks&quot; below. Without it a sender could forge the check that says
+          who they are, so no message can be trusted. Mail that arrives meanwhile waits in the mailbox and is read once the name is set.
         </p>
       ) : null}
 

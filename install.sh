@@ -1011,9 +1011,9 @@ ask_stack() {
 
 ask_secrets() {
   heading "Secrets"
-  local existing kept=no; existing=$(env_read .env AUTH_SECRET)
+  local existing; existing=$(env_read .env AUTH_SECRET)
   if [[ -n $existing && $existing != replace-me-* ]] && ! have AUTH_SECRET; then
-    ANS[AUTH_SECRET]=$existing; kept=yes
+    ANS[AUTH_SECRET]=$existing
     ok "Keeping the AUTH_SECRET from the current .env (changing it would log everyone out and make saved SMTP/OAuth secrets unreadable)."
   elif have AUTH_SECRET; then
     ok "Using the AUTH_SECRET you supplied."
@@ -1026,13 +1026,6 @@ ask_secrets() {
       ok "Generated a new AUTH_SECRET."
     fi
   fi
-  # The namespace the derived keys use. An install that already has an AUTH_SECRET but no line was made before the
-  # rename to Lampstand and keeps the old namespace (empty here: nothing is written); anything new gets lampstand.
-  local dprefix; dprefix=$(env_read .env DERIVE_PREFIX)
-  if have DERIVE_PREFIX; then :
-  elif [[ -n $dprefix ]]; then ANS[DERIVE_PREFIX]=$dprefix
-  elif [[ $kept == yes ]]; then ANS[DERIVE_PREFIX]=''
-  else ANS[DERIVE_PREFIX]=lampstand; fi
   local meili; meili=$(env_read .env MEILI_MASTER_KEY)
   if have MEILI_MASTER_KEY; then :
   elif [[ -n $meili && $meili != dev-master-key-change-in-prod ]]; then ANS[MEILI_MASTER_KEY]=$meili
@@ -1082,7 +1075,6 @@ write_env() {
   local f=$1 idx=$2 i k peers=''
   cp .env.example "$f"
   env_set "$f" AUTH_SECRET "$(ans AUTH_SECRET)"
-  [[ -n $(ans DERIVE_PREFIX) ]] && env_set "$f" DERIVE_PREFIX "$(ans DERIVE_PREFIX)"
   env_set "$f" MEILI_MASTER_KEY "$(ans MEILI_MASTER_KEY)"
   env_set "$f" EXTERNAL_PORT "$(ans EXTERNAL_PORT)"
   [[ -n $(ans TRUSTED_PROXIES) ]] && env_set "$f" TRUSTED_PROXIES "$(ans TRUSTED_PROXIES)"

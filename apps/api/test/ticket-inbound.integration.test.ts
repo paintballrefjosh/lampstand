@@ -308,20 +308,20 @@ describe.skipIf(!url)("tickets from email against a real database", () => {
     const gmailPass = "mx.google.com; dkim=pass header.d=test.local; spf=pass smtp.mailfrom=hdm-ana@test.local; dmarc=pass (p=NONE) header.from=test.local";
 
     it("strict mode refuses mail the server did not confirm, and accepts a DMARC pass", async () => {
-      expect(await go(eml({ from: A() }), { auth: "strict" })).toMatchObject({ outcome: "skipped", reason: "not_authenticated" });
-      expect((await go(eml({ from: A(), headers: { "Authentication-Results": gmailPass } }), { auth: "strict" })).outcome).toBe("ticket");
+      expect(await go(eml({ from: A() }), { auth: "strict", authServer: "mx.google.com" })).toMatchObject({ outcome: "skipped", reason: "not_authenticated" });
+      expect((await go(eml({ from: A(), headers: { "Authentication-Results": gmailPass } }), { auth: "strict", authServer: "mx.google.com" })).outcome).toBe("ticket");
     });
 
     it("refuses a failed DMARC even when DKIM passed (strict)", async () => {
       const h = "mx.google.com; dkim=pass header.d=test.local; dmarc=fail header.from=test.local";
-      expect(await go(eml({ from: A(), headers: { "Authentication-Results": h } }), { auth: "strict" })).toMatchObject({ reason: "not_authenticated" });
+      expect(await go(eml({ from: A(), headers: { "Authentication-Results": h } }), { auth: "strict", authServer: "mx.google.com" })).toMatchObject({ reason: "not_authenticated" });
     });
 
     it("aligned mode accepts a DKIM pass for the sender's own domain only", async () => {
       const own = "mx.google.com; dkim=pass header.d=test.local";
       const other = "mx.google.com; dkim=pass header.d=evil.example";
-      expect((await go(eml({ from: A(), headers: { "Authentication-Results": own } }), { auth: "aligned" })).outcome).toBe("ticket");
-      expect(await go(eml({ from: A(), headers: { "Authentication-Results": other } }), { auth: "aligned" })).toMatchObject({ reason: "not_authenticated" });
+      expect((await go(eml({ from: A(), headers: { "Authentication-Results": own } }), { auth: "aligned", authServer: "mx.google.com" })).outcome).toBe("ticket");
+      expect(await go(eml({ from: A(), headers: { "Authentication-Results": other } }), { auth: "aligned", authServer: "mx.google.com" })).toMatchObject({ reason: "not_authenticated" });
     });
 
     it("does not believe a header the sender wrote when the mail server is named", async () => {

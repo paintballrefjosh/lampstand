@@ -92,7 +92,7 @@ export function ptrName(ip: string): string {
 }
 
 /** Longest hosted reverse zone containing `name`, or null. */
-function reverseZoneFor(name: string, zones: string[]): string | null {
+export function reverseZoneFor(name: string, zones: string[]): string | null {
   let best: string | null = null;
   for (const z of zones) {
     if (!z.endsWith("in-addr.arpa")) continue;
@@ -246,9 +246,6 @@ export function computeSyncPlan(input: PlanInput): ComputedSyncPlan {
     if (exact) {
       if (exact.ttl !== input.ttl) {
         act({ op: "update", zone: d.zone, name: d.name, type: d.type, value: d.value, fromValue: exact.value, ipamHostId: d.hostId, reason: `TTL ${exact.ttl} -> ${input.ttl}` });
-      } else if (!exact.comments?.includes(DNS_MANAGED_MARKER)) {
-        // Made before the rename to Lampstand: same record, old marker. Writing it back puts the new marker on.
-        act({ op: "update", zone: d.zone, name: d.name, type: d.type, value: d.value, fromValue: exact.value, ipamHostId: d.hostId, reason: "Marker renamed" });
       } else {
         unchanged++;
       }

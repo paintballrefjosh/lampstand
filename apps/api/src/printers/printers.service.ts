@@ -5,7 +5,7 @@ import {
   Logger,
   type OnModuleInit,
 } from "@nestjs/common";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { DB, type Db } from "../db/db.module";
 import { printers } from "../db/schema";
 import { SettingsService } from "../settings/settings.service";
@@ -20,6 +20,15 @@ import type {
 import { probePrinterSnmp } from "./snmp";
 import { probeFieryQueue } from "./fiery";
 import { checkLocation } from "../assets/locations.service";
+import { UnreadableSecretError, encryptSecret } from "../settings/crypto";
+import {
+  DEVICE_SECRET_PLACEHOLDER,
+  needsSealing,
+  openDeviceSecret,
+  presentDeviceSecret,
+  sealDeviceSecretCreate,
+  sealDeviceSecretUpdate,
+} from "../settings/device-secret";
 
 /**
  * Defaults if no settings rows exist yet. Reseeding is idempotent so these are
@@ -80,9 +89,9 @@ export class PrintersService implements OnModuleInit {
         kind: input.kind,
         snmpPort: input.snmpPort,
         snmpVersion: input.snmpVersion,
-        snmpCommunity: input.snmpCommunity,
+        snmpCommunity: sealDeviceSecretCreate(input.snmpCommunity),
         fieryApiUrl: input.fieryApiUrl,
-        fieryApiKey: input.fieryApiKey,
+        fieryApiKey: sealDeviceSecretCreate(input.fieryApiKey),
         notes: input.notes ?? null,
         locationId: (await checkLocation(this.db, input.locationId)) ?? null,
       })
@@ -99,9 +108,11 @@ export class PrintersService implements OnModuleInit {
     if (input.kind !== undefined) patch.kind = input.kind;
     if (input.snmpPort !== undefined) patch.snmpPort = input.snmpPort;
     if (input.snmpVersion !== undefined) patch.snmpVersion = input.snmpVersion;
-    if (input.snmpCommunity !== undefined) patch.snmpCommunity = input.snmpCommunity;
+    const community = sealDeviceSecretUpdate(input.snmpCommunity);
+    if (community !== undefined) patch.snmpCommunity = community;
     if (input.fieryApiUrl !== undefined) patch.fieryApiUrl = input.fieryApiUrl;
-    if (input.fieryApiKey !== undefined) patch.fieryApiKey = input.fieryApiKey;
+    const fieryKey = sealDeviceSecretUpdate(input.fieryApiKey);
+    if (fieryKey !== undefined) patch.fieryApiKey = fieryKey;
     if (input.notes !== undefined) patch.notes = input.notes;
     if (input.locationId !== undefined) patch.locationId = (await checkLocation(this.db, input.locationId)) ?? null;
     if (input.enabled !== undefined) patch.enabled = input.enabled;
@@ -134,10 +145,25 @@ export class PrintersService implements OnModuleInit {
   // ---- polling ----
 
   async pollOne(id: string): Promise<Printer> {
-    const printer = await this.getById(id);
+    const [printer] = await this.db.select().from(printers).where(eq(printers.id, id)).limit(1);
+    if (!printer) throw new NotFoundException("Printer not found");
     if (!printer.enabled) {
       // Don't probe disabled printers; just return current snapshot.
-      return printer;
+      return toPrinter(printer);
+    }
+    let savedCommunity: string | null;
+    let fieryApiKey: string;
+    try {
+      savedCommunity = openDeviceSecret(printer.snmpCommunity, "SNMP community");
+      fieryApiKey = openDeviceSecret(printer.fieryApiKey, "Fiery API key") ?? "";
+    } catch (err) {
+      if (!(err instanceof UnreadableSecretError)) throw err;
+      const [row] = await this.db
+        .update(printers)
+        .set({ lastStatus: "unknown", lastCheckedAt: new Date(), lastError: err.message, updatedAt: new Date() })
+        .where(eq(printers.id, id))
+        .returning();
+      return toPrinter(row!);
     }
 
     const snmpTimeout = await this.getNumberSetting(
@@ -145,7 +171,7 @@ export class PrintersService implements OnModuleInit {
       FALLBACK_SNMP_TIMEOUT_MS,
     );
     const community =
-      printer.snmpCommunity ??
+      savedCommunity ??
       (await this.getStringSetting("printers.default_snmp_community", FALLBACK_SNMP_COMMUNITY));
     const versionRaw =
       printer.snmpVersion ??
@@ -174,7 +200,7 @@ export class PrintersService implements OnModuleInit {
       );
       const fiery = await probeFieryQueue({
         apiUrl: printer.fieryApiUrl,
-        apiKey: printer.fieryApiKey ?? "",
+        apiKey: fieryApiKey,
         timeoutMs: fieryTimeout,
       });
       fieryQueueDepth = fiery.queueDepth;
@@ -204,6 +230,7 @@ export class PrintersService implements OnModuleInit {
   }
 
   async pollAll(): Promise<void> {
+    await this.sealLegacySecrets().catch((err: unknown) => this.logger.warn(`could not encrypt saved printer credentials: ${(err as Error).message}`));
     const rows = await this.db.select({ id: printers.id }).from(printers).where(eq(printers.enabled, true));
     // Concurrency-limit so we don't fan out 50 sockets at once.
     const limit = 5;
@@ -222,15 +249,46 @@ export class PrintersService implements OnModuleInit {
   }
 
   /**
+   * Credentials saved in plain text (before they were encrypted, or restored from an older backup) are encrypted in
+   * place. Each UPDATE names the plain value it replaces, so two nodes doing this at once cannot undo each other.
+   */
+  async sealLegacySecrets(): Promise<number> {
+    const rows = await this.db
+      .select({ id: printers.id, snmpCommunity: printers.snmpCommunity, fieryApiKey: printers.fieryApiKey })
+      .from(printers);
+    let sealed = 0;
+    for (const r of rows) {
+      if (needsSealing(r.snmpCommunity)) {
+        await this.db
+          .update(printers)
+          .set({ snmpCommunity: encryptSecret(r.snmpCommunity) })
+          .where(and(eq(printers.id, r.id), eq(printers.snmpCommunity, r.snmpCommunity)));
+        sealed++;
+      }
+      if (needsSealing(r.fieryApiKey)) {
+        await this.db
+          .update(printers)
+          .set({ fieryApiKey: encryptSecret(r.fieryApiKey) })
+          .where(and(eq(printers.id, r.id), eq(printers.fieryApiKey, r.fieryApiKey)));
+        sealed++;
+      }
+    }
+    return sealed;
+  }
+
+  /**
    * Ad-hoc SNMP probe for the printer Add/Edit dialog's "Test connection"
    * button. Uses the per-printer values supplied in the body, with the global
-   * defaults from the settings table filling in anything left blank.
+   * defaults from the settings table filling in anything left blank. The edit
+   * dialog shows a saved community as "[saved]"; testing with that sends the
+   * printer's id, and the saved value is used.
    */
   async testConnection(opts: {
     host: string;
     port?: number;
     version?: "v1" | "v2c";
     community?: string;
+    printerId?: string;
     timeoutMs?: number;
   }): Promise<{
     ok: boolean;
@@ -254,7 +312,20 @@ export class PrintersService implements OnModuleInit {
       "printers.snmp_timeout_ms",
       FALLBACK_SNMP_TIMEOUT_MS,
     );
-    const community = opts.community?.trim() || defaultsCommunity;
+    let typed = opts.community?.trim() ?? "";
+    if (typed === DEVICE_SECRET_PLACEHOLDER) {
+      const [row] = opts.printerId
+        ? await this.db.select({ snmpCommunity: printers.snmpCommunity }).from(printers).where(eq(printers.id, opts.printerId)).limit(1)
+        : [];
+      if (!row) return { ok: false, message: "Type the community to test it." };
+      try {
+        typed = openDeviceSecret(row.snmpCommunity, "SNMP community") ?? "";
+      } catch (err) {
+        if (err instanceof UnreadableSecretError) return { ok: false, message: err.message };
+        throw err;
+      }
+    }
+    const community = typed || defaultsCommunity;
     const version = (opts.version ?? (defaultVersion === "v1" ? "v1" : "v2c")) as "v1" | "v2c";
     const timeoutMs = opts.timeoutMs ?? defaultTimeout;
 
@@ -299,9 +370,9 @@ function toPrinter(row: typeof printers.$inferSelect): Printer {
     kind: row.kind as Printer["kind"],
     snmpPort: row.snmpPort,
     snmpVersion: (row.snmpVersion as Printer["snmpVersion"]) ?? null,
-    snmpCommunity: row.snmpCommunity ?? null,
+    snmpCommunity: presentDeviceSecret(row.snmpCommunity),
     fieryApiUrl: row.fieryApiUrl ?? null,
-    fieryApiKey: row.fieryApiKey ?? null,
+    fieryApiKey: presentDeviceSecret(row.fieryApiKey),
     enabled: row.enabled,
     notes: row.notes ?? null,
     locationId: row.locationId ?? null,

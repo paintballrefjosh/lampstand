@@ -4,28 +4,17 @@ Context file for Claude (or any AI assistant) working on this repo. Keep this cu
 
 ## What this project is
 
-**Lampstand** (renamed 2026-11-08 from "Church Dashboard"; the name's meaning is the first thing in the README). A web-based dashboard for a single church. Modular tile dashboard, helpdesk
+**Lampstand** (the name's meaning is the first thing in the README). A web-based dashboard for a single church. Modular tile dashboard, helpdesk
 (tickets + SLAs), wiki, notes, monitoring + incidents, printer (SNMP) status,
 UniFi network views, ProPresenter control, Planning Center, volunteer checklists,
 tags, @mentions, activity feed, full-text search, a notification centre, and
 admin. Self-hosted via Docker Compose behind an upstream HTTPS load balancer.
 
-**Naming (renamed from "Church Dashboard" on 2026-11-08).** Everything is called `lampstand`: the repo, the `@lampstand/*` workspace scope, the compose
-projects (`lampstand`, `lampstand-prod`) and images (`lampstand-<service>`), the database and its user, the default bucket (`lampstand-files`), the
-cookies and headers (`lampstand_rv`, `lampstand_home_look`, `X-Lampstand-Node`, `X-Lampstand-Signature`). **Five places still read an old
-`church-dashboard` string, on purpose, because data written before the rename carries it** (each is a named LEGACY constant with a test; new data
-never uses it):
-(1) saved secrets (`settings/crypto.ts`: `decryptSecret` tries the new salt, then `LEGACY_SALT`; a value is rewritten under the new salt the next
-time it is saved, there is no bulk re-encryption, so the legacy salt can only go once every row has been saved again); (2) web push (`vapid.ts`
-`deriveLegacyVapidKeys`; `PushService.send` retries a 401/403 with the old key pair, which is what a subscription made before the rename needs);
-(3) backups: `LEGACY_ARCHIVE_FORMAT` is still accepted by the reader, `acceptedSecretFingerprints()` accepts the old fingerprint, and offsite copies
-named `church-dashboard-<time>-<id>.tar.gz` are still recognised and pruned, ordered by the time in the name; (4) DNS records the sync made carry
-`managed-by:church-dashboard` (`LEGACY_DNS_MANAGED_MARKER`, `hasManagedMarker`): still owned, and `computeSyncPlan` rewrites the comment with an
-update ("Marker renamed") on the next run; (5) the sudoers files `90-` and `zz-church-dashboard-<login>` (`legacySudoersFilesFor`) are removed when
-passwordless sudo is set up again. **`DERIVE_PREFIX`** (`.env`, read by `scripts/compose.sh`) is the namespace the bundled database password and Garage's
-key are derived with: new installs get `lampstand` (installer, `make init-env`); an install without the line keeps `church-dashboard`, **never add the
-line to a running install** (the stored password and key were made from the old one). Sample text and prose that say "church" (example domains,
-"Church Apps", "a church") are about the organisation, not the product. The GitHub repo is `paintballrefjosh/lampstand`.
+**Naming.** Everything is called `lampstand`: the repo, the `@lampstand/*` workspace scope, the compose projects (`lampstand`, `lampstand-prod`) and
+images (`lampstand-<service>`), the database and its user, the default bucket (`lampstand-files`), the cookies and headers (`lampstand_rv`,
+`lampstand_home_look`, `X-Lampstand-Node`, `X-Lampstand-Signature`), and the key-derivation strings. **There is no compatibility with any earlier
+product name** (decided 2026-11-27: assume no installation predates the name), so do not add legacy fallbacks for one. Sample text and prose that
+say "church" (example domains, "Church Apps", "a church") are about the organisation, not the product. The GitHub repo is `paintballrefjosh/lampstand`.
 
 **Tenancy:** single church only. Do **not** add `tenant_id` columns or multi-tenant
 abstractions. If multi-tenancy is ever needed it will be a separate, explicit phase.
@@ -275,8 +264,18 @@ query stats, zones and records, plus audited record create/edit/delete
 so writes address a record by zone + name + structured `data` and re-read it
 first: that read is the audit "before", supplies the current TTL/disabled flag
 (an update that omits them resets TTL to 3600 and re-enables the record), and
-refuses (409) records whose comment carries `DNS_MANAGED_MARKER`. Same
-`monitors:*` permissions as cisco/ipam/ups.
+refuses (409) records whose comment carries `DNS_MANAGED_MARKER`. An A record write may ask for its **reverse record**
+(`createPtr`, the form's "Create reverse DNS record" switch, off by default): the service writes the PTR itself
+(`planPtr`/`writePtr`), not with Technitium's `ptr` flag. **Nothing is overwritten or created without a yes**: a PTR that
+points to another name, or a missing reverse zone, answers 409 with a `DnsPtrRefusal` and writes nothing, until the call
+repeats with `replacePtr` (exactly the names shown) or `createPtrZone` (a primary /24 zone in the forward zone's
+**catalog**, so cluster secondaries get it); the form shows the current value and asks. The record's own PTR follows a
+rename without asking. A sync-owned PTR pointing elsewhere or a non-primary reverse zone is refused outright; an address
+change removes the old address's hand-made PTR only if it pointed at the edited name; a PTR failure after the A record is
+saved comes back as `ptr.error`, not an error status. **Deleting an A record: Technitium itself removes a PTR that points
+back at it** (verified; no parameter stops it), so `removePtr: false` (the delete dialog's switch, on by default) writes it
+again with its TTL, comment and disabled flag; a sync-owned one is always kept. `GET /dns/ptr?ip=` is what the dialog shows
+(`dns-ptr.test.ts`). Same `monitors:*` permissions as cisco/ipam/ups.
 
 **IPAM→DNS sync** (`dns/dns.sync.ts`, `dns_*` settings, migration 0048): hosts
 in subnets with `ipam_subnets.dns_sync` on get an A record in `dns.sync_zone`
@@ -332,6 +331,11 @@ Run updates dialog): after a SUCCESSFUL upgrade `upgradeScript` runs `apt-get -y
 A failing autoremove fails the run (exit code), its output follows the upgrade's in the same log, and it is off by default because it deletes software.
 Test: `apps/api/test/infra-update-cleanup.test.ts`.
 
+**The Run updates dialog remembers its checkboxes** (2026-11-28): they start as they were for the most recent run on ANY host by anyone
+(`GET /infra/update-run-defaults`, `InfraUpdaterService.lastRunOptions`, read from `infra_update_runs`, so nothing separate is stored);
+`DEFAULT_INFRA_UPDATE_RUN_OPTIONS` (reboot only) when there is no run. Cancelling the dialog changes nothing. A new checkbox in that
+dialog joins `InfraUpdateRunOptions`, the query and the defaults.
+
 **Switching a Cisco switch off** (`cisco_switches.enabled`, migration 0090; the Monitoring pill in the switch list, the same pill on the switch page, and a
 checkbox in Edit switch; all use `PATCH /cisco/switches/:id {enabled}`): `pollAll` skips it, `pollSwitch` returns at once and `pinnedConn` refuses, so no
 SSH login happens at all (no backups, drift checks, pushes); the poll, re-import, collect, backup, drift-push and port-toggle routes answer 409
@@ -345,6 +349,11 @@ but are left out of `openAlerts` and the open-incident list (nothing is polling 
 counts it under `targets.disabled`, not in `total`. Switching it back on clears `last_polled_at` and sets the
 status to `unknown`, so it is polled at the next tick and the old reading is not mistaken for a current one. The
 overview greys the card and says "Disabled"; the host page greys its last readings and shows a banner.
+
+**Infra overview host filter** (`/monitoring/infra`, `host-filter-card.tsx`, rules in `apps/web/src/lib/host-filter.ts` with a test): switches for
+down, disabled and up hosts, a tile on the summary row, remembered in this browser. They filter the host cards only, never the summary
+tiles. Degraded and unknown hosts have no switch and always show. The "Targets up" figure is green when all are up, amber while at
+most 3 are down (degraded or unread alone is amber) and red beyond that (`lib/targets-up-tone.ts`).
 
 **Maintenance mode:** the `monitoring.maintenance_mode` boolean setting silences
 alert *notifications* across infra thresholds, service up/down, UniFi
@@ -409,7 +418,10 @@ day ranges, windows across midnight, on `site.timezone`). Outside every window t
 (`MONITOR_SECRET_OPTION_KEYS`: the HTTP probe's `authorization`, the `password` of PJLink/OBS) are stored for the worker but every monitor the API
 returns carries `[saved]` instead (`redactMonitorOptions`; the Monitoring USER tier, every volunteer, reads monitors, and so do MCP tools); on an
 update the placeholder, or a secret key left out, keeps the saved value and `""` removes it (`mergeMonitorSecretOptions`). Until 2026-10-25 the
-Authorization header was returned to every reader, and editing the monitor in the form silently dropped it. (4) **`options.alerts: false`
+Authorization header was returned to every reader, and editing the monitor in the form silently dropped it. **Printer and UPS credentials** (SNMP
+community, Fiery API key) follow the same rule through `settings/device-secret.ts`: answers say `[saved]`, rows hold `enc:v1:`, the pollers seal
+values still in plain text (older rows, older backups), and a Test with `[saved]` sends the device id (until 2026-11-13 GET /printers gave every
+volunteer the Fiery key and community in clear). (4) **`options.alerts: false`
 mutes a monitor** (`monitorAlertsOff`, the form's "Send alerts" box, "Alerts off" on its page): incidents, activity and the status page are
 unchanged, but the worker sends no down/up/flapping notice and `alert-escalation` skips its incidents. **A test monitor that goes down on
 purpose must set it** (smoke `alerts.mjs`, e2e `status.spec.ts`): until 2026-10-25 every run told the real monitoring recipients, and the
@@ -422,7 +434,7 @@ site-wide destinations: ntfy, Pushover, Slack, Teams (Workflows webhook), Discor
 over `<timestamp>.<body>`) and Twilio SMS. `events` is `outages` (`OUTAGE_ALERT_KINDS`, each kind with its recovery) or `everything`
 (also `OTHER_ALERT_KINDS`). The token or webhook URL is `secret` (encrypted `enc:v1:`, never returned: `hasSecret`). **Every request
 is built by the pure `buildAlertRequests`; destinations go through `alertDestinationProblem`** (Slack/Discord/Teams only to their own
-hosts over https; never credentials in the URL; never link-local, also after DNS resolution), no redirects, 10 s timeout. A failure is
+hosts over https; never credentials in the URL; never this machine, link-local or a container of this stack, checked on the address the socket connects to), no redirects, 10 s timeout. The reply's words go on the channel (`last_error`) only for the hosted services, never for ntfy or a webhook (their reply is whatever sits at an address the admin typed). A failure is
 recorded on the channel (`last_error`), never retried per channel. (2) *The outbox* (`alert_outbox`, `skip` in the backup registry): the
 **probe worker no longer writes bell rows**: `notifyAll` queues a `fanout` row and the API's `alert-dispatch` cluster job (5 s) tells the
 monitoring recipients through `NotificationsService.createMany` (so email, push, quiet hours and urgent kinds apply; until 2026-10-25 a
@@ -567,7 +579,9 @@ group with moderator/admin on Tickets plus the admin group. (3) *Saved replies* 
 lastUid}` in `job_state` (first look = last 24 h only) and records every message by Message-ID in `ticket_inbound_log` (unique; the real
 dedupe; `skip` in the backup registry; 90-day prune). **Never trust a From line**: a sender must be an active, approved account with
 `tickets:write:own` AND pass `senderAuthenticated` (`strict` DMARC pass by default, `aligned`, or `off`), judged only on an
-Authentication-Results header written by `tickets.inbound.auth_server` when that is set (`pickAuthResultsHeader`). **The mailbox never
+Authentication-Results header written by `tickets.inbound.auth_server` (`pickAuthResultsHeader`; a blank name believes nothing, and with sender
+checks on and no name the job stops before reading, `inboundAuthServerProblem`, so waiting mail is read once it is set; until 2026-11-13 a blank
+name believed the topmost header, which a sender can forge when the provider adds none). **The mailbox never
 sends anything back** (no bounces, no auto-replies: no loops, no backscatter), skips auto-generated mail, the site's own address and a
 sender over 30 messages/hour. A subject with `[#n]` comments on that ticket if the sender can read it (quoted text cut by
 `stripQuotedReply`), otherwise a new ticket is opened (a forwarded message is the request, so new tickets keep quoted text). Ticket emails
@@ -807,12 +821,25 @@ audit snapshot.
   `describeUserAgent` (`packages/shared/src/user-agent.ts`) turns it into "Firefox on Windows".
 - **`POST /me/change-password` needs `currentPassword`**, except for a forced change (`mustChangePassword`) and for an
   account with no local password yet. The web profile form signs the person out after it.
+- **The person's address** (`req.ip`: rate limits, failed sign-in counts, audit, sessions) is decided by the API, per request, from
+  the site settings `auth.trusted_proxies` and `auth.trusted_proxies_strict` (Admin > Settings > Authentication; rules in
+  `packages/shared/src/client-ip.ts`, the per-node holder `auth/client-ip.ts`, refreshed every 5 s; Fastify `trustProxy: trustProxyHop`).
+  Caddy never picks: it keeps a trusted peer's `X-Forwarded-For` and appends the address it was connected from (**never `header_up
+  X-Forwarded-For` in the Caddyfile**), and the web passes the whole chain on (`forwardedChain`, rightmost 20). Modes: `any` (no list, strict
+  off: the leftmost entry, which anyone can forge; the default, so an upgrade changes nothing, and a Security overview warning), `strict` (from
+  the right, the first address not in the list; with an empty list, whoever connected to Caddy), `standard` (the leftmost only when a trusted
+  proxy connected). `TRUSTED_PROXIES` in `.env` (the older way) still narrows which peers Caddy passes on and is the API's list, read strictly,
+  while the setting is blank. Until 2026-11-13 Caddy took the leftmost entry itself and a forged header stepped around every per-address limit.
+  Tests: `client-ip.test.ts` (a real Fastify with the trust function), smoke.
 - **Failed sign-ins are counted per account** (`RateLimitService.failures/recordFailure/clearFailures`, same
   `rate_limit_buckets` table, key `acct|<identifier typed>`, existing account or not): 10 failures in 15 minutes
   refuse further attempts with 429 `too_many_attempts`; a success clears it. **And per address**: 30 failures in 15
   minutes (`MAX_FAILED_SIGNINS_PER_IP`, key `acct|ip|<address>`, never cleared by a success). Failures, not attempts: a
   church's volunteers share one public address on the building Wi-Fi. `verify-credentials` always spends the
   time of one argon2 check (`verifyPasswordOrDecoy`) and says "deleted" only after the right password.
+- **"Invalid credentials" is only for a refusal** (`apps/web/src/lib/signin-failure.ts`, unit-tested): the API's 400/401 to
+  `verify-credentials`. A 5xx or any other status, no answer within 30 s or an unreadable one is `code=unavailable`, and the
+  sign-in page says the server could not check the password. Until 2026-11-26 a database outage read as a wrong password.
 - **`verify-credentials` is internal only** (Caddy `@internal_only` + `assertInternalCaller`), refused while
   `auth.local.enabled` is off, and the web's Credentials `authorize()` passes the person's address in
   `X-Forwarded-For` (until 2026-10-25 it sent none, so every sign-in counted against the web container's address).
@@ -898,6 +925,24 @@ sends it as `hostedDomain` to `oauth-provision`; an absent field, from an older 
 the address). Microsoft sign-in is refused when no allowed domains are set and the tenant is a shared
 endpoint (`common`/`organizations`/`consumers`); the allowed-domain list is matched against the user
 principal name, never the free `email` claim (only a single tenant also falls back to `email`).
+
+**External identities: one person, many sign-in methods** (2026-11-14). `users` is the person, `accounts` (Auth.js's table, PK `(provider, providerAccountId)`) holds
+each linked external login and `credentials` the optional local password; any mix is valid and every identity keys on the provider's own stable id, never the email,
+after the first sign-in. **A first sign-in whose address matches an existing account attaches to it** (an admin-made account with no password is how a person is
+pre-provisioned for Google or Microsoft; one with a password can be linked too), but only for a provider that `mayLinkByEmail` (`packages/shared/src/oauth-policy.ts`,
+`OAUTH_EMAIL_TRUST`) believes: Google (`verified-claim`: the `signIn` callback has already refused an unverified address by the time Auth.js links), Microsoft only for ONE named
+tenant (`single-tenant-only`: on `common`/`organizations`/`consumers` the `email` claim is editable by the account owner, the nOAuth takeover), any other provider `never`.
+The provider config sets `allowDangerousEmailAccountLinking` from that function and nowhere else; **a new provider is added to `OAUTH_EMAIL_TRUST` on purpose** (unknown = never,
+tested). The link is then made from the profile instead: **Security > Linked sign-in methods** (`linked-signins-panel.tsx`) runs the ordinary OAuth flow while signed in, which Auth.js
+attaches to the current account whatever its address. Rules: (1) the `signIn` callback runs BEFORE the link, with a fresh random `user.id` that matches no row, so
+`provisionOAuthUser` looks the person up by email too (`byEmail`): a soft-deleted account answers `deleted`, a disabled one `rejected`, and "already in a group: an admin's
+decision stands" applies; that lookup is for the DECISION only, every write stays tied to a row under the given id. (2) Auth.js writes the `accounts` row itself, so the web's
+`linkAccount` event (skipped when `createUser` fired in the same request) calls `oauth-provision` with `linkedNow` and the API records `user.identity.link` through the dynamic
+audit (replacing that call's route row). (3) `IdentitiesService.unlink` (`GET /me/identities`, `DELETE /me/identities/:provider?id=`, `@SessionOnly`, MCP-excluded) is ONE
+conditional DELETE that only runs while a password or another identity would remain, so two racing removals cannot lock a person out (409 otherwise, 404 when it is not theirs).
+Unlinking does not end sessions made through that identity. (4) The approval rules are unchanged and differ by provider: Google can hold an outsider `pending`, Microsoft
+admits whoever its tenant or allowed-domain list admits straight into the default group. Tests: `oauth-policy.test.ts` (`mayLinkByEmail`), `oauth-link.integration.test.ts`
+(CockroachDB and YugabyteDB).
 
 **Soft delete:** `DELETE /users/:id` tombstones the row (`deleted_at`,
 `is_active=false`) but keeps authored content + audit attribution;
@@ -1350,8 +1395,8 @@ must keep a second node working:
 - **Load balancer contract:** `/healthz` on the proxy (200 with `X-Lampstand-Node` while
   the API reaches the database, 503 otherwise, 503 `draining` while
   `data/caddy/drain` exists; `scripts/cluster.sh drain|undrain|status`).
-  `TRUSTED_PROXIES` (the balancer's CIDRs) turns on strict `X-Forwarded-For`
-  parsing in the proxy; unset keeps the old trust-everyone behaviour on purpose.
+  Which forwarded address is the client's is decided by the API from the admin settings
+  "Trusted proxies" / "Strict proxy mode" (see "The person's address" under ## Auth flow), never by Caddy.
   The API's `/api/v1/readyz` answers 503 when degraded; keep it that way.
 - **`scripts/rebuild.sh`** rebuilds api, web and monitor and recreates/restarts the
   proxy when its config changes. A new service or a new config file needs adding
@@ -1666,15 +1711,6 @@ image in a one-off container -> swap only `api web monitor` (`up -d --no-build -
 only when `infra/` changed; in a cluster `cluster.sh drain` before and `undrain` after the node is healthy) -> verify
 inside the containers (`/readyz`, web answering, `BUILD_ID` of api and web equals `scripts/build-id.sh`) -> otherwise
 roll back by itself. A failed build or migration puts the code back before anything was swapped. Rules:
-- **A version can change the compose project name** (the Lampstand rename: `church-prod` -> `lampstand-prod`; compose only knows the checked-out
-  version's project, so the others are found by LABEL). `upgrade.sh` compares the running containers' project (`RUN_OLD`: the old name too when the checkout is
-  already on the new version) with the target's `name:`, and when they differ (a `COMPOSE_PROJECT_NAME` in `.env` or the environment means they do not) it
-  `retire_project`s the old containers (stop, rm, networks; never volumes or `./data`) right before a FULL `up -d`, and the unhealthy path retires the new
-  project and restores the old one from the images still on the node (`restore_old`: no rebuild while the site is down). `ensure_local_images` gives the
-  services built from this repo besides api/web/monitor (Garage) their image under the new name: a retag of the old one, else a build. **A bundled database
-  is refused** (it would have to change project): stop before touching anything and point at INSTALL.md. Before this (found 2026-11-12 on a 3-node cluster)
-  the swap failed on `No such image: lampstand-prod-garage` and, with the image present, would have started a second stack beside the old one on the same
-  port and Garage metadata. Tests: `tests/upgrade/upgrade.sh` "the new version renames the compose project".
 - **Do not skip rebuilding a service because its sources did not change.** `BUILD_ID` is baked into every image and every
   node of a cluster must run the same build; Docker's layer cache already makes the unchanged parts cheap.
 - **Build once, pull everywhere (`IMAGE_REGISTRY`, 2026-10-24)**: with `IMAGE_REGISTRY=<prefix>` (`.env` or environment; the prefix
@@ -1812,6 +1848,22 @@ is typed, so a mixed-case row could never be matched.
   permission authorises its category (`SETTING_CATEGORY_MANAGE_PERMISSION`) and the module page links to it for admins only. Done: Signage, Printers, ProPresenter,
   Livestreams, Planning Center (its people links are `/planning-center/links`), Help Desk (`/tickets/settings`: SLA targets and the mailbox; `/tickets/categories`), Wiki (`/wiki/settings`), Assistant (`/assistant/settings`, `/assistant/usage`), Checklists (the admin pages are `/checklists/manage/*`, a tab row), Monitoring (`/monitoring/settings` for checks, retention and alerts; `/monitoring/network/settings` UniFi, `/dns/settings`, `/ipam/settings`, `/monitoring/ups/settings`). **Do not add a module to `admin/settings/categories.ts` or the Admin menu**; Admin (hub, menu and settings list) is for site admins and site-wide settings only (site, auth, Google, Microsoft, SMTP, backups, attachments, home page defaults, retention, push, monthly report). Never pass a lucide icon into a client component (a server page does that): keep the page shell server-rendered. Old `/admin/...` addresses
   redirect in `next.config.mjs`.
+- **Outbound connections to an address an admin typed go through ONE guard** (reviewed 2026-11-15; before it, three hand-written checks had drifted apart
+  and ProPresenter's host was pasted into a URL unchecked, so `api:3001/api/v1/readyz#` as the host would have made the dashboard fetch its own API).
+  Pure rules in `packages/shared/src/contact-host.ts` (`contactHostProblem`, `contactUrlProblem`, `STACK_HOST_NAMES`; `blockedAddress` in
+  `schemas/livestream.ts` parses IPv6 properly and unwraps mapped, IPv4-compatible, NAT64 and 6to4 forms) refuse this machine, link-local
+  (cloud metadata), multicast and the stack's own containers, and are used at SAVE time (`validateSettingValue` for `propresenter.host`,
+  `unifi.controller_url`, `dns.primary_url`, the mailbox host, alert destinations, livestream links). **The API connects only through
+  `apps/api/src/net/outbound.ts`** (`outboundFetch`, `outboundAgent`, `assertOutboundHost`): its socket `lookup` judges the address it is really
+  connecting to (no check-then-resolve-again gap, so DNS rebinding does not work), redirects are followed for a GET only (3 hops, each host
+  checked) and never for anything else; **a redirect to another origin keeps only harmless headers** (`headersForRedirect`, so a connector's
+  key never follows; the same host moving from http to https keeps them). A NEW connector that takes a host or URL from settings or a form uses it and gets a case in
+  `validateSettingValue`; never `fetch(`${host}...`)`, and never build a URL by pasting a typed host into a string (`propresenterUrl` allows
+  letters, digits, dots and dashes only). `allowShortNames` keeps `pp7-mac`-style one-word LAN names working for the connectors that always
+  accepted them; the stack's container names stay refused by name. A fake device in a test must listen on `lanAddress()` (`test/lan-address.ts`),
+  not 127.0.0.1. **Known gap:** yt-dlp and ffmpeg (livestreams) resolve and follow redirects themselves, so they get the pre-check
+  (`assertFetchableHost`) but not the pinned connection; a Livestreams moderator could still reach a host through a redirect (blind, no
+  response). Tests: `outbound.test.ts`, `contact-host.test.ts`, `alert-channels.test.ts`, smoke `alert-channels.mjs`.
 - **No emoji in code.** Per repo conventions.
 
 ## Common commands

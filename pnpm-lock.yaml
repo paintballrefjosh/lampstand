@@ -27,10 +27,10 @@ overrides:
 
 patchedDependencies:
   '@fastify/busboy@3.2.3':
-    hash: uh5qqdbvpf6vdqb5yx7o2t3agq
+    hash: 3zlv3ctsxv574asvx3nnboxhtq
     path: patches/@fastify__busboy@3.2.3.patch
   drizzle-orm@0.45.4:
-    hash: 45wf2q6yxjdjfneyx2rejjlwz4
+    hash: f3nnmybdosgzmfkt62nnvfr3um
     path: patches/drizzle-orm@0.45.4.patch
 
 importers:
@@ -90,7 +90,7 @@ importers:
         version: 0.45.2
       drizzle-orm:
         specifier: 0.45.4
-        version: 0.45.4(patch_hash=45wf2q6yxjdjfneyx2rejjlwz4)(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(mysql2@3.24.6(@types/node@20.16.10))(pg@8.23.1)
+        version: 0.45.4(patch_hash=f3nnmybdosgzmfkt62nnvfr3um)(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(mysql2@3.24.6(@types/node@20.16.10))(pg@8.23.1)
       fastify:
         specifier: 5.12.8
         version: 5.12.8
@@ -271,7 +271,7 @@ importers:
         version: 8.0.4
       drizzle-orm:
         specifier: 0.45.4
-        version: 0.45.4(patch_hash=45wf2q6yxjdjfneyx2rejjlwz4)(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(mysql2@3.24.6(@types/node@20.16.10))(pg@8.23.1)
+        version: 0.45.4(patch_hash=f3nnmybdosgzmfkt62nnvfr3um)(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(mysql2@3.24.6(@types/node@20.16.10))(pg@8.23.1)
       lucide-react:
         specifier: 0.460.0
         version: 0.460.0(react@19.3.1)
@@ -399,7 +399,7 @@ importers:
         version: link:../../packages/shared
       drizzle-orm:
         specifier: 0.45.4
-        version: 0.45.4(patch_hash=45wf2q6yxjdjfneyx2rejjlwz4)(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(mysql2@3.24.6(@types/node@20.16.10))(pg@8.23.1)
+        version: 0.45.4(patch_hash=f3nnmybdosgzmfkt62nnvfr3um)(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(mysql2@3.24.6(@types/node@20.16.10))(pg@8.23.1)
       pg:
         specifier: 8.23.1
         version: 8.23.1
@@ -7693,7 +7693,7 @@ snapshots:
       ajv-formats: 3.0.1(ajv@8.20.0)
       fast-uri: 4.2.4
 
-  '@fastify/busboy@3.2.3(patch_hash=uh5qqdbvpf6vdqb5yx7o2t3agq)': {}
+  '@fastify/busboy@3.2.3(patch_hash=3zlv3ctsxv574asvx3nnboxhtq)': {}
 
   '@fastify/cookie@11.1.5':
     dependencies:
@@ -7736,7 +7736,7 @@ snapshots:
 
   '@fastify/multipart@10.1.7':
     dependencies:
-      '@fastify/busboy': 3.2.3(patch_hash=uh5qqdbvpf6vdqb5yx7o2t3agq)
+      '@fastify/busboy': 3.2.3(patch_hash=3zlv3ctsxv574asvx3nnboxhtq)
       '@fastify/deepmerge': 3.2.4
       '@fastify/error': 4.2.1
       fastify-plugin: 6.0.1
@@ -10251,7 +10251,7 @@ snapshots:
       esbuild: 0.25.12
       tsx: 4.23.15
 
-  drizzle-orm@0.45.4(patch_hash=45wf2q6yxjdjfneyx2rejjlwz4)(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(mysql2@3.24.6(@types/node@20.16.10))(pg@8.23.1):
+  drizzle-orm@0.45.4(patch_hash=f3nnmybdosgzmfkt62nnvfr3um)(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(mysql2@3.24.6(@types/node@20.16.10))(pg@8.23.1):
     optionalDependencies:
       '@opentelemetry/api': 1.10.0
       '@types/pg': 8.23.1

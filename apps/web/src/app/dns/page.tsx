@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useId, useMemo, useState } from "react";
 import { RefreshCw, Search, Plus, Pencil, Trash2 } from "lucide-react";
 import {
   DNS_EDITABLE_TYPES,
@@ -11,6 +11,9 @@ import {
   type DnsRecord,
   type DnsRecordData,
   type DnsHealthMonitorsResult,
+  type DnsRecordWriteResult,
+  type DnsPtrRefusal,
+  type DnsPtrState,
   type DnsSyncAction,
   type DnsSyncPlan,
   type DnsSyncRun,
@@ -427,7 +430,8 @@ function errorText(body: unknown, status: number): string {
   return parts.length > 0 ? parts.join("; ") : `Request failed (HTTP ${status})`;
 }
 
-async function sendJson(url: string, method: string, body: unknown): Promise<string | null> {
+/** Returns the error to show, or null. `onAnswer` gets the answer's body, refused or not. */
+async function sendJson(url: string, method: string, body: unknown, onAnswer?: (answer: unknown) => void): Promise<string | null> {
   try {
     const r = await fetch(url, {
       method,
@@ -435,8 +439,9 @@ async function sendJson(url: string, method: string, body: unknown): Promise<str
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     });
-    if (r.ok) return null;
-    return errorText(await r.json().catch(() => null), r.status);
+    const answer: unknown = await r.json().catch(() => null);
+    onAnswer?.(answer);
+    return r.ok ? null : errorText(answer, r.status);
   } catch (err) {
     return (err as Error).message;
   }
@@ -450,6 +455,7 @@ function Records({ paramZone, paramQ, canWrite }: { paramZone: string | null; pa
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<{ ok: boolean; text: string } | null>(null);
   const [editing, setEditing] = useState<{ mode: "create" } | { mode: "edit"; record: DnsRecord } | null>(null);
+  const [deleting, setDeleting] = useState<DnsRecord | null>(null);
 
   // A search-result click while this view is open changes the URL params.
   useEffect(() => {
@@ -459,24 +465,26 @@ function Records({ paramZone, paramQ, canWrite }: { paramZone: string | null; pa
     setQ(paramQ);
   }, [paramQ]);
 
-  useEffect(() => {
-    void (async () => {
-      const r = await getJson<DnsZone[]>("/api/dns/zones");
-      if (!r.ok) {
-        setError(r.error);
-        return;
-      }
-      setZones(r.data);
-      // Default to the first Primary zone that isn't a reverse zone.
-      setZone(
-        (cur) =>
-          cur ??
-          r.data.find((z) => z.type === "Primary" && !z.name.endsWith(".arpa"))?.name ??
-          r.data[0]?.name ??
-          null,
-      );
-    })();
+  const loadZones = useCallback(async () => {
+    const r = await getJson<DnsZone[]>("/api/dns/zones");
+    if (!r.ok) {
+      setError(r.error);
+      return;
+    }
+    setZones(r.data);
+    // Default to the first Primary zone that isn't a reverse zone.
+    setZone(
+      (cur) =>
+        cur ??
+        r.data.find((z) => z.type === "Primary" && !z.name.endsWith(".arpa"))?.name ??
+        r.data[0]?.name ??
+        null,
+    );
   }, []);
+
+  useEffect(() => {
+    void loadZones();
+  }, [loadZones]);
 
   const loadRecords = useCallback(async () => {
     if (!zone) return;
@@ -528,17 +536,6 @@ function Records({ paramZone, paramQ, canWrite }: { paramZone: string | null; pa
   // Only primary zones accept edits; secondaries are read-only copies.
   const zoneInfo = zones?.find((z) => z.name === zone) ?? null;
   const zoneWritable = canWrite && zoneInfo?.type === "Primary";
-
-  const removeRecord = async (r: DnsRecord) => {
-    if (!zone || !r.data) return;
-    if (!confirm(`Delete ${r.type} record ${rel(r.name)} → ${r.value}?`)) return;
-    const err = await sendJson(`/api/dns/zones/${encodeURIComponent(zone)}/records`, "DELETE", {
-      name: r.name,
-      data: r.data,
-    });
-    setStatus(err ? { ok: false, text: err } : { ok: true, text: `Deleted ${r.type} ${rel(r.name)}.` });
-    if (!err) await loadRecords();
-  };
 
   if (error && !zones) return <p className="text-sm text-rose-600 dark:text-rose-400">{error}</p>;
   if (!zones) return <p className="text-sm text-slate-500 dark:text-slate-400">Loading…</p>;
@@ -674,7 +671,10 @@ function Records({ paramZone, paramQ, canWrite }: { paramZone: string | null; pa
                                 <Pencil className="h-4 w-4" />
                               </button>
                               <button
-                                onClick={() => void removeRecord(r)}
+                                onClick={() => {
+                                  setStatus(null);
+                                  setDeleting(r);
+                                }}
                                 title="Delete record"
                                 className="rounded p-1.5 text-slate-500 dark:text-slate-400 hover:bg-rose-100 hover:text-rose-700 dark:hover:bg-rose-900/40 dark:hover:text-rose-300"
                               >
@@ -704,9 +704,23 @@ function Records({ paramZone, paramQ, canWrite }: { paramZone: string | null; pa
           record={editing.mode === "edit" ? editing.record : null}
           relName={rel}
           onClose={() => setEditing(null)}
-          onSaved={async (text) => {
+          onSaved={async (saved, zoneCreated) => {
             setEditing(null);
-            setStatus({ ok: true, text });
+            setStatus(saved);
+            await Promise.all([loadRecords(), zoneCreated ? loadZones() : null]);
+          }}
+        />
+      ) : null}
+
+      {deleting && zone ? (
+        <DeleteRecordDialog
+          zone={zone}
+          record={deleting}
+          relName={rel}
+          onClose={() => setDeleting(null)}
+          onDeleted={async (deleted) => {
+            setDeleting(null);
+            setStatus(deleted);
             await loadRecords();
           }}
         />
@@ -726,6 +740,7 @@ interface FormState {
   preference: string;
   text: string;
   splitText: boolean;
+  createPtr: boolean;
   priority: string;
   weight: string;
   port: string;
@@ -742,6 +757,7 @@ function formFromRecord(r: DnsRecord | null, relName: (n: string) => string): Fo
     preference: "10",
     text: "",
     splitText: false,
+    createPtr: false,
     priority: "0",
     weight: "0",
     port: "",
@@ -800,6 +816,245 @@ function dataFromForm(f: FormState): DnsRecordData {
   }
 }
 
+/** The line shown after a write, including what happened to the reverse record. */
+function writeStatus(done: string, ptr: DnsRecordWriteResult["ptr"], deleted = false): { ok: boolean; text: string } {
+  if (!ptr) return { ok: true, text: `${done}.` };
+  const zone = ptr.createdZone ? ` Created reverse zone ${ptr.zone}.` : "";
+  if (ptr.error) return { ok: false, text: `${done}, but the reverse record was not fully updated: ${ptr.error}${zone}` };
+  if (deleted) {
+    return {
+      ok: true,
+      text: ptr.removed ? `${done}. Also removed reverse record ${ptr.removed}.` : `${done}. Kept reverse record ${ptr.name}.`,
+    };
+  }
+  const was = ptr.replaced.length > 0 ? ` It pointed to ${ptr.replaced.join(", ")} before.` : "";
+  const removed = ptr.removed ? ` Removed the old reverse record ${ptr.removed}.` : "";
+  return { ok: true, text: `${done}.${zone} Reverse record ${ptr.name} points to ${ptr.target}.${was}${removed}` };
+}
+
+/** The API's "ask the person first" answer, when `answer` is one. */
+function ptrRefusal(answer: unknown): DnsPtrRefusal | null {
+  const code = (answer as { code?: unknown } | null)?.code;
+  return code === "dns_ptr_exists" || code === "dns_ptr_zone_missing" ? (answer as DnsPtrRefusal) : null;
+}
+
+const sameHost = (a: string, b: string): boolean =>
+  a.toLowerCase().replace(/\.$/, "") === b.toLowerCase().replace(/\.$/, "");
+
+function Switch({
+  label,
+  help,
+  checked,
+  onChange,
+}: {
+  label: string;
+  help: React.ReactNode;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  const id = useId();
+  return (
+    <div className="flex items-start gap-3">
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        aria-labelledby={`${id}-label`}
+        aria-describedby={`${id}-help`}
+        onClick={() => onChange(!checked)}
+        className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
+          checked ? "bg-brand-600" : "bg-slate-400 dark:bg-slate-600"
+        }`}
+      >
+        <span
+          aria-hidden
+          className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
+            checked ? "translate-x-[1.375rem]" : "translate-x-0.5"
+          }`}
+        />
+      </button>
+      <div className="min-w-0">
+        <span id={`${id}-label`} className="text-sm font-medium">
+          {label}
+        </span>
+        <p id={`${id}-help`} className="break-words text-xs text-slate-500 dark:text-slate-400">
+          {help}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+const warningCls =
+  "space-y-2 break-words rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200";
+const secondaryBtnCls =
+  "rounded-md border border-slate-300 px-3 py-2 text-sm font-medium hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800";
+const primaryBtnCls =
+  "rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50";
+
+/** What the save would also do to reverse DNS, with the choice to go ahead or not. Nothing has been written yet. */
+function PtrQuestion({
+  ask,
+  busy,
+  onProceed,
+  onBack,
+}: {
+  ask: DnsPtrRefusal;
+  busy: boolean;
+  onProceed: () => void;
+  onBack: () => void;
+}) {
+  const exists = ask.code === "dns_ptr_exists";
+  return (
+    <div className={warningCls}>
+      <div role="alert" className="space-y-1">
+        {ask.code === "dns_ptr_exists" ? (
+          <>
+            <p className="font-medium">This will overwrite an existing reverse record.</p>
+            <dl className="grid grid-cols-[auto_1fr] gap-x-3 text-xs">
+              <dt>Record</dt>
+              <dd className="font-mono">{ask.name}</dd>
+              <dt>Current value</dt>
+              <dd className="font-mono">{ask.current.join(", ")}</dd>
+              <dt>New value</dt>
+              <dd className="font-mono">{ask.target}</dd>
+            </dl>
+          </>
+        ) : (
+          <>
+            <p className="font-medium">The reverse zone {ask.reverseZone} does not exist.</p>
+            <p className="text-xs">
+              It can be created as a primary zone. The DNS server will then answer every reverse lookup in that address range
+              itself.
+            </p>
+          </>
+        )}
+        <p className="text-xs">Nothing has been saved yet.</p>
+      </div>
+      <div className="flex flex-wrap justify-end gap-2">
+        {/* Focus lands on the choice that changes nothing. */}
+        <button type="button" autoFocus onClick={onBack} className={secondaryBtnCls}>
+          {exists ? "Don't overwrite" : "Don't create"}
+        </button>
+        <button type="button" disabled={busy} onClick={onProceed} className={primaryBtnCls}>
+          {busy ? "Saving…" : exists ? "Overwrite and save" : "Create zone and save"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function DeleteRecordDialog({
+  zone,
+  record,
+  relName,
+  onClose,
+  onDeleted,
+}: {
+  zone: string;
+  record: DnsRecord;
+  relName: (n: string) => string;
+  onClose: () => void;
+  onDeleted: (status: { ok: boolean; text: string }) => Promise<void>;
+}) {
+  const ip = record.data?.type === "A" ? record.data.ipAddress : null;
+  const [state, setState] = useState<{ ptr: DnsPtrState } | { error: string } | null>(null);
+  const [removePtr, setRemovePtr] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!ip) return;
+    void (async () => {
+      const r = await getJson<DnsPtrState>(`/api/dns/ptr?ip=${encodeURIComponent(ip)}`);
+      setState(r.ok ? { ptr: r.data } : { error: r.error });
+    })();
+  }, [ip]);
+
+  const remove = async () => {
+    if (!record.data) return;
+    setBusy(true);
+    setErr(null);
+    let ptr: DnsRecordWriteResult["ptr"];
+    const error = await sendJson(
+      `/api/dns/zones/${encodeURIComponent(zone)}/records`,
+      "DELETE",
+      { name: record.name, data: record.data, removePtr },
+      (answer) => {
+        ptr = (answer as DnsRecordWriteResult | null)?.ptr;
+      },
+    );
+    setBusy(false);
+    if (error) {
+      setErr(error);
+      return;
+    }
+    await onDeleted(writeStatus(`Deleted ${record.type} ${relName(record.name)}`, ptr, true));
+  };
+
+  const reverse = (): React.ReactNode => {
+    if (!state) return <p className="text-xs text-slate-500 dark:text-slate-400">Checking for a reverse record…</p>;
+    if ("error" in state) {
+      return (
+        <>
+          <p className="text-xs text-rose-600 dark:text-rose-400">Couldn&apos;t check the reverse record: {state.error}</p>
+          <Switch
+            label="Also remove reverse DNS record"
+            help="Removes the PTR record for this address if it points to this name."
+            checked={removePtr}
+            onChange={setRemovePtr}
+          />
+        </>
+      );
+    }
+    const { name, editable, records } = state.ptr;
+    const own = records.find((r) => sameHost(r.target, record.name));
+    const note = (text: string) => <p className="break-words text-xs text-slate-600 dark:text-slate-400">{text}</p>;
+    if (!own) {
+      return note(
+        records.length > 0
+          ? `The reverse record ${name} points to ${records.map((r) => r.target).join(", ")}, not to this name. It will be kept.`
+          : "This address has no reverse record.",
+      );
+    }
+    if (own.managed) return note(`The reverse record ${name} is managed by the IPAM sync. It will be kept.`);
+    if (!editable) return note(`The reverse record ${name} is in a read-only zone. It can't be changed here.`);
+    return (
+      <Switch
+        label="Also remove reverse DNS record"
+        help={`${name} points to ${own.target}. It will be ${removePtr ? "removed" : "kept"}.`}
+        checked={removePtr}
+        onChange={setRemovePtr}
+      />
+    );
+  };
+
+  return (
+    <Modal title={`Delete ${record.type} record`} onClose={onClose}>
+      <div className="space-y-3">
+        <p className="break-words text-sm">
+          Delete <span className="font-mono">{relName(record.name)}</span> → <span className="font-mono">{record.value}</span>?
+        </p>
+        {ip ? reverse() : null}
+        {err ? <p className="text-sm text-rose-600 dark:text-rose-400">{err}</p> : null}
+        <div className="flex justify-end gap-2 pt-1">
+          <button type="button" onClick={onClose} className={secondaryBtnCls}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={busy || (ip !== null && !state)}
+            onClick={() => void remove()}
+            className="rounded-md bg-rose-600 px-3 py-2 text-sm font-medium text-white hover:bg-rose-700 disabled:opacity-50"
+          >
+            {busy ? "Deleting…" : "Delete record"}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 const TARGET_LABEL: Partial<Record<DnsEditableType, string>> = {
   CNAME: "Points to (domain)",
   PTR: "Host name",
@@ -818,21 +1073,38 @@ function RecordForm({
   record: DnsRecord | null;
   relName: (n: string) => string;
   onClose: () => void;
-  onSaved: (text: string) => Promise<void>;
+  onSaved: (status: { ok: boolean; text: string }, zoneCreated: boolean) => Promise<void>;
 }) {
   const [f, setF] = useState<FormState>(() => formFromRecord(record, relName));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const set = <K extends keyof FormState>(k: K, v: FormState[K]) => setF((prev) => ({ ...prev, [k]: v }));
+  /** Set when the API wants an answer about the reverse record before it saves. */
+  const [ask, setAsk] = useState<DnsPtrRefusal | null>(null);
+  const set = <K extends keyof FormState>(k: K, v: FormState[K]) => {
+    // The question was about the values as they were.
+    setAsk(null);
+    setF((prev) => ({ ...prev, [k]: v }));
+  };
   const editing = record !== null && record.data !== null;
 
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  /** `agreed` is the question the person has just said yes to. */
+  const save = async (agreed: DnsPtrRefusal | null) => {
     setBusy(true);
     setErr(null);
     const ttl = f.ttl.trim() === "" ? undefined : Number(f.ttl);
     const data = dataFromForm(f);
     const url = `/api/dns/zones/${encodeURIComponent(zone)}/records`;
+    const reverse = {
+      createPtr: data.type === "A" && f.createPtr,
+      replacePtr: agreed?.code === "dns_ptr_exists" ? agreed.current : [],
+      createPtrZone: agreed?.code === "dns_ptr_zone_missing",
+    };
+    let ptr: DnsRecordWriteResult["ptr"];
+    let question: DnsPtrRefusal | null = null;
+    const onAnswer = (answer: unknown) => {
+      ptr = (answer as DnsRecordWriteResult | null)?.ptr;
+      question = ptrRefusal(answer);
+    };
     const error = editing
       ? await sendJson(url, "PATCH", {
           current: { name: record.name, data: record.data },
@@ -840,20 +1112,32 @@ function RecordForm({
           ttl: ttl ?? record.ttl,
           comments: f.comments,
           data,
-        })
-      : await sendJson(url, "POST", { name: f.name.trim() || "@", ttl, comments: f.comments, data });
+          ...reverse,
+        }, onAnswer)
+      : await sendJson(url, "POST", { name: f.name.trim() || "@", ttl, comments: f.comments, data, ...reverse }, onAnswer);
     setBusy(false);
+    setAsk(question);
+    if (question) return;
     if (error) {
       setErr(error);
       return;
     }
-    await onSaved(`${editing ? "Updated" : "Added"} ${data.type} ${f.name.trim() || "@"}.`);
+    await onSaved(
+      writeStatus(`${editing ? "Updated" : "Added"} ${data.type} ${f.name.trim() || "@"}`, ptr),
+      ptr?.createdZone ?? false,
+    );
   };
 
   const t = f.type;
   return (
     <Modal title={editing ? `Edit ${t} record` : `Add record to ${zone}`} onClose={onClose}>
-      <form onSubmit={(e) => void submit(e)} className="space-y-3">
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          void save(null);
+        }}
+        className="space-y-3"
+      >
         <div className="grid grid-cols-[7rem_1fr] gap-3">
           <Field label="Type">
             <select
@@ -889,6 +1173,17 @@ function RecordForm({
               required
             />
           </Field>
+        ) : null}
+
+        {t === "A" ? (
+          <Switch
+            label="Create reverse DNS record"
+            help={`Points the PTR record for this address at this name.${
+              editing ? " If the address changes, the old PTR record for this name is removed." : ""
+            }`}
+            checked={f.createPtr}
+            onChange={(on) => set("createPtr", on)}
+          />
         ) : null}
 
         {t === "MX" || t === "SRV" ? (
@@ -960,22 +1255,18 @@ function RecordForm({
 
         {err ? <p className="text-sm text-rose-600 dark:text-rose-400">{err}</p> : null}
 
-        <div className="flex justify-end gap-2 pt-1">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            disabled={busy}
-            className="rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
-          >
-            {busy ? "Saving…" : editing ? "Save changes" : "Add record"}
-          </button>
-        </div>
+        {ask ? (
+          <PtrQuestion ask={ask} busy={busy} onProceed={() => void save(ask)} onBack={() => setAsk(null)} />
+        ) : (
+          <div className="flex justify-end gap-2 pt-1">
+            <button type="button" onClick={onClose} className={secondaryBtnCls}>
+              Cancel
+            </button>
+            <button type="submit" disabled={busy} className={primaryBtnCls}>
+              {busy ? "Saving…" : editing ? "Save changes" : "Add record"}
+            </button>
+          </div>
+        )}
       </form>
     </Modal>
   );

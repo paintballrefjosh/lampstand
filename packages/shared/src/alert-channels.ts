@@ -1,4 +1,6 @@
 import type { AlertChannelEvents, AlertChannelType } from "./schemas/alert-channel";
+import { contactHostProblem } from "./contact-host";
+import { blockedAddress } from "./schemas/livestream";
 
 /**
  * Pure rules for alert channels (see schemas/alert-channel.ts): which notices a channel is sent, and the exact HTTP
@@ -202,17 +204,17 @@ const ALLOWED_HOSTS: Partial<Record<AlertChannelType, (host: string) => boolean>
   teams: (h) => /\.logic\.azure\.com$/.test(h) || /\.powerplatform\.com$/.test(h) || /\.webhook\.office\.com$/.test(h),
 };
 
-/** Address literals no alert may go to: link-local (cloud metadata lives there) and the unspecified address. */
+/** Addresses no alert may go to: this machine, link-local (cloud metadata lives there), "any", multicast. */
 export function isForbiddenAlertAddress(host: string): boolean {
-  const h = host.replace(/^\[|\]$/g, "").toLowerCase();
-  if (/^169\.254\./.test(h) || h === "0.0.0.0" || h === "::" || h === "metadata.google.internal") return true;
-  if (/^fe[89ab][0-9a-f]:/.test(h) || h === "fd00:ec2::254") return true;
-  return false;
+  return blockedAddress(host);
 }
 
 /**
  * Why a destination address is refused, or null when it is fine. https is required for the hosted chat services; a
- * self-hosted ntfy or webhook may be http on the LAN. Never credentials in the URL, never a link-local address.
+ * self-hosted ntfy or webhook may be http on the LAN. Never credentials in the URL, never this machine, a link-local
+ * address or one of the stack's own containers (the reply's first words are kept on the channel and shown to its admin,
+ * so a channel pointed inward would read the API, the database or the object store back). The sender checks again
+ * after DNS, on the address it actually connects to.
  */
 export function alertDestinationProblem(type: AlertChannelType, raw: string): string | null {
   let u: URL;
@@ -223,7 +225,8 @@ export function alertDestinationProblem(type: AlertChannelType, raw: string): st
   }
   if (u.protocol !== "https:" && u.protocol !== "http:") return "Only http and https addresses can be used.";
   if (u.username || u.password) return "Put the credentials in the secret field, not in the address.";
-  if (isForbiddenAlertAddress(u.hostname)) return "That address is link-local (where cloud metadata services live) and is not allowed.";
+  const hostProblem = contactHostProblem(u.hostname);
+  if (hostProblem) return `That address is not allowed: ${hostProblem}`;
   const allow = ALLOWED_HOSTS[type];
   if (allow) {
     if (u.protocol !== "https:") return "This service's webhook addresses start with https://.";

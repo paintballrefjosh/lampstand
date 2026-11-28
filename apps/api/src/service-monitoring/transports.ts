@@ -1,10 +1,8 @@
-import { lookup } from "node:dns/promises";
 import { connect as tcpConnect, isIP } from "node:net";
 import * as snmp from "net-snmp";
-import { Agent, request } from "undici";
+import { request } from "undici";
 import { createConnection as mysqlConnection } from "mysql2/promise";
 import {
-  blockedAddress,
   hideSecrets,
   parseOutput,
   placeholders,
@@ -21,6 +19,7 @@ import { createPool } from "@lampstand/shared/db";
 import type { QueryArrayConfig } from "pg";
 import { sshExec } from "../infra/collectors/ssh";
 import type { CollectContext } from "../infra/collectors/types";
+import { assertOutboundHost, outboundAgent } from "../net/outbound";
 
 /**
  * The network half of a service template: run one collector against a host and turn what came back into rows (the pure
@@ -53,10 +52,10 @@ export interface CollectorRun {
 
 export class TransportError extends Error {}
 
-const verifyingAgent = new Agent({ connect: { rejectUnauthorized: true } });
-const insecureAgent = new Agent({ connect: { rejectUnauthorized: false } });
+// Both resolve through the guard, so the address connected to is the one judged (no check-then-resolve-again gap).
+const verifyingAgent = outboundAgent(true);
+const insecureAgent = outboundAgent(false);
 
-const STACK_NAMES = new Set(["api", "web", "proxy", "caddy", "meilisearch", "garage", "monitor", "cockroach", "localhost"]);
 
 /**
  * A host the dashboard may contact for a service: never loopback, link-local (cloud metadata) or "any", never one of
@@ -64,20 +63,11 @@ const STACK_NAMES = new Set(["api", "web", "proxy", "caddy", "meilisearch", "gar
  * Private LAN addresses are the point.
  */
 export async function assertServiceHost(host: string): Promise<void> {
-  const h = host.trim().replace(/^\[|\]$/g, "").toLowerCase();
-  if (!h) throw new TransportError("no host to connect to");
-  if (blockedAddress(h)) throw new TransportError(`${h} is not an address the dashboard may contact`);
-  if (isIP(h) === 0) {
-    if (STACK_NAMES.has(h) || /^cockroach/.test(h) || !h.includes(".")) {
-      throw new TransportError(`"${h}" is not allowed: use the host's full name or its address`);
-    }
-    let addrs: Array<{ address: string }>;
-    try {
-      addrs = await lookup(h, { all: true });
-    } catch {
-      throw new TransportError(`${h} could not be found (DNS)`);
-    }
-    if (addrs.some((a) => blockedAddress(a.address))) throw new TransportError(`${h} resolves to an address the dashboard may not contact`);
+  if (!host.trim()) throw new TransportError("no host to connect to");
+  try {
+    await assertOutboundHost(host);
+  } catch (err) {
+    throw new TransportError((err as Error).message);
   }
 }
 

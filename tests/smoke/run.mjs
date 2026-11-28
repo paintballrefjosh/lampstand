@@ -377,6 +377,14 @@ async function main() {
     assert((await fetchWithCookies("/api/v1/me", {}, jar)).res.status === 200, "this browser must stay signed in");
   });
 
+  await test("DELETE /me/identities refuses a repeated id and answers 404 for one that is not linked", async () => {
+    // Neither can remove anything: the first is not text, the second is no sign-in of this account.
+    const { res: twice } = await fetchWithCookies("/api/v1/me/identities/google?id=a&id=b", { method: "DELETE" }, jar);
+    assert(twice.status === 400, `repeated id: status ${twice.status}`);
+    const { res: unknown } = await fetchWithCookies("/api/v1/me/identities/google?id=smoke-not-linked", { method: "DELETE" }, jar);
+    assert(unknown.status === 404, `unlinked id: status ${unknown.status}`);
+  });
+
   await test("DELETE /me/sessions/current signs this browser out (what the sign-out button does)", async () => {
     const mine = await signInFresh();
     await fetchWithCookies("/api/v1/me", {}, mine);
@@ -1722,6 +1730,15 @@ async function main() {
     assert(after.status === 404, `expected 404, got ${after.status}`);
   });
 
+  await test("GET /api/v1/infra/update-run-defaults answers the four update run choices", async () => {
+    const { res } = await fetchWithCookies("/api/v1/infra/update-run-defaults", {}, jar);
+    assert(res.status === 200, `status ${res.status}`);
+    const body = await res.json();
+    for (const k of ["reboot", "fullUpgrade", "includePhased", "cleanup"]) {
+      assert(typeof body[k] === "boolean", `${k}: ${JSON.stringify(body)}`);
+    }
+  });
+
   // ---- Infrastructure: switching a host's monitoring off ----
   {
     let infraId = null;
@@ -1857,6 +1874,14 @@ async function main() {
       name: "printer",
       comments: "managed-by:lampstand",
       data: { type: "A", ipAddress: "10.0.0.5" },
+    });
+    assert(res.status === 400, `status ${res.status}`);
+  });
+  await test("POST /api/v1/dns/zones/:zone/records refuses a reverse record for a non-A record", async () => {
+    const { res } = await dnsWrite("POST", {
+      name: "alias",
+      data: { type: "CNAME", cname: "host.example.org" },
+      createPtr: true,
     });
     assert(res.status === 400, `status ${res.status}`);
   });

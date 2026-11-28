@@ -5,7 +5,7 @@ import {
   Logger,
   type OnModuleInit,
 } from "@nestjs/common";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { DB, type Db } from "../db/db.module";
 import { upsDevices } from "../db/schema";
 import { SettingsService } from "../settings/settings.service";
@@ -20,6 +20,15 @@ import type {
   UpsOutputSource,
 } from "@lampstand/shared";
 import { probeUpsSnmp } from "./snmp";
+import { UnreadableSecretError, encryptSecret } from "../settings/crypto";
+import {
+  DEVICE_SECRET_PLACEHOLDER,
+  needsSealing,
+  openDeviceSecret,
+  presentDeviceSecret,
+  sealDeviceSecretCreate,
+  sealDeviceSecretUpdate,
+} from "../settings/device-secret";
 
 // Bootstrap-time fallbacks if no settings rows exist yet.
 const FALLBACK_SNMP_VERSION = "v2c";
@@ -75,7 +84,7 @@ export class UpsService implements OnModuleInit {
         host: input.host.trim(),
         snmpPort: input.snmpPort,
         snmpVersion: input.snmpVersion,
-        snmpCommunity: input.snmpCommunity,
+        snmpCommunity: sealDeviceSecretCreate(input.snmpCommunity),
         notes: input.notes ?? null,
       })
       .returning();
@@ -90,7 +99,8 @@ export class UpsService implements OnModuleInit {
     if (input.host !== undefined) patch.host = input.host.trim();
     if (input.snmpPort !== undefined) patch.snmpPort = input.snmpPort;
     if (input.snmpVersion !== undefined) patch.snmpVersion = input.snmpVersion;
-    if (input.snmpCommunity !== undefined) patch.snmpCommunity = input.snmpCommunity;
+    const community = sealDeviceSecretUpdate(input.snmpCommunity);
+    if (community !== undefined) patch.snmpCommunity = community;
     if (input.notes !== undefined) patch.notes = input.notes;
     if (input.enabled !== undefined) patch.enabled = input.enabled;
     const [row] = await this.db.update(upsDevices).set(patch).where(eq(upsDevices.id, id)).returning();
@@ -122,10 +132,23 @@ export class UpsService implements OnModuleInit {
   // ---- polling ----
 
   async pollOne(id: string): Promise<Ups> {
-    const ups = await this.getById(id);
-    if (!ups.enabled) return ups; // don't probe disabled devices
+    const [ups] = await this.db.select().from(upsDevices).where(eq(upsDevices.id, id)).limit(1);
+    if (!ups) throw new NotFoundException("UPS not found");
+    if (!ups.enabled) return toUps(ups); // don't probe disabled devices
 
-    const result = await probeUpsSnmp(await this.connectionFor(ups));
+    let conn: Awaited<ReturnType<UpsService["connectionFor"]>>;
+    try {
+      conn = await this.connectionFor(ups);
+    } catch (err) {
+      if (!(err instanceof UnreadableSecretError)) throw err;
+      const [row] = await this.db
+        .update(upsDevices)
+        .set({ lastStatus: "unknown", lastCheckedAt: new Date(), lastError: err.message, updatedAt: new Date() })
+        .where(eq(upsDevices.id, id))
+        .returning();
+      return toUps(row!);
+    }
+    const result = await probeUpsSnmp(conn);
 
     const [row] = await this.db
       .update(upsDevices)
@@ -148,6 +171,7 @@ export class UpsService implements OnModuleInit {
   }
 
   async pollAll(): Promise<void> {
+    await this.sealLegacySecrets().catch((err: unknown) => this.logger.warn(`could not encrypt saved UPS communities: ${(err as Error).message}`));
     const rows = await this.db.select({ id: upsDevices.id }).from(upsDevices).where(eq(upsDevices.enabled, true));
     const limit = 5;
     let idx = 0;
@@ -164,15 +188,32 @@ export class UpsService implements OnModuleInit {
     await Promise.all(workers);
   }
 
+  /** Communities saved in plain text (before they were encrypted, or from an older backup) are encrypted in place. */
+  async sealLegacySecrets(): Promise<number> {
+    const rows = await this.db.select({ id: upsDevices.id, snmpCommunity: upsDevices.snmpCommunity }).from(upsDevices);
+    let sealed = 0;
+    for (const r of rows) {
+      if (!needsSealing(r.snmpCommunity)) continue;
+      await this.db
+        .update(upsDevices)
+        .set({ snmpCommunity: encryptSecret(r.snmpCommunity) })
+        .where(and(eq(upsDevices.id, r.id), eq(upsDevices.snmpCommunity, r.snmpCommunity)));
+      sealed++;
+    }
+    return sealed;
+  }
+
   /**
    * Ad-hoc SNMP probe for the UPS Add/Edit dialog's "Test connection" button.
-   * Uses supplied values, filling blanks from the monitoring.ups_* defaults.
+   * Uses supplied values, filling blanks from the monitoring.ups_* defaults. A community of "[saved]" with `upsId`
+   * tests with that device's saved community.
    */
   async testConnection(opts: {
     host: string;
     port?: number;
     version?: "v1" | "v2c";
     community?: string;
+    upsId?: string;
     timeoutMs?: number;
   }): Promise<{
     ok: boolean;
@@ -182,9 +223,21 @@ export class UpsService implements OnModuleInit {
     runtimeMin?: number | null;
   }> {
     if (!opts.host?.trim()) return { ok: false, message: "Host is required" };
+    let typed = opts.community?.trim() ?? "";
+    if (typed === DEVICE_SECRET_PLACEHOLDER) {
+      const [row] = opts.upsId
+        ? await this.db.select({ snmpCommunity: upsDevices.snmpCommunity }).from(upsDevices).where(eq(upsDevices.id, opts.upsId)).limit(1)
+        : [];
+      if (!row) return { ok: false, message: "Type the community to test it." };
+      try {
+        typed = openDeviceSecret(row.snmpCommunity, "SNMP community") ?? "";
+      } catch (err) {
+        if (err instanceof UnreadableSecretError) return { ok: false, message: err.message };
+        throw err;
+      }
+    }
     const community =
-      opts.community?.trim() ||
-      (await this.getStringSetting("monitoring.ups_default_snmp_community", FALLBACK_SNMP_COMMUNITY));
+      typed || (await this.getStringSetting("monitoring.ups_default_snmp_community", FALLBACK_SNMP_COMMUNITY));
     const defaultVersion = await this.getStringSetting(
       "monitoring.ups_default_snmp_version",
       FALLBACK_SNMP_VERSION,
@@ -215,7 +268,7 @@ export class UpsService implements OnModuleInit {
 
   // ---- helpers ----
 
-  private async connectionFor(ups: Ups): Promise<{
+  private async connectionFor(ups: typeof upsDevices.$inferSelect): Promise<{
     host: string;
     port: number;
     version: "v1" | "v2c";
@@ -223,7 +276,7 @@ export class UpsService implements OnModuleInit {
     timeoutMs: number;
   }> {
     const community =
-      ups.snmpCommunity ??
+      openDeviceSecret(ups.snmpCommunity, "SNMP community") ??
       (await this.getStringSetting("monitoring.ups_default_snmp_community", FALLBACK_SNMP_COMMUNITY));
     const versionRaw =
       ups.snmpVersion ??
@@ -259,7 +312,7 @@ function toUps(row: typeof upsDevices.$inferSelect): Ups {
     host: row.host,
     snmpPort: row.snmpPort,
     snmpVersion: (row.snmpVersion as Ups["snmpVersion"]) ?? null,
-    snmpCommunity: row.snmpCommunity ?? null,
+    snmpCommunity: presentDeviceSecret(row.snmpCommunity),
     enabled: row.enabled,
     notes: row.notes ?? null,
     lastStatus: row.lastStatus as UpsStatus,

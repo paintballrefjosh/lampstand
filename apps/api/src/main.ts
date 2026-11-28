@@ -12,6 +12,7 @@ import { RateLimitService } from "./cluster/rate-limit.service";
 import { ClusterBus } from "./cluster/cluster-bus.service";
 import { registerReadYourWrites } from "./cluster/read-your-writes";
 import { SettingsService } from "./settings/settings.service";
+import { trustProxyHop } from "./auth/client-ip";
 
 const DEFAULT_RATE_LIMIT_PER_MIN = 1200;
 // Floor so a mistyped setting (0, 5) can't lock every user out of the UI.
@@ -39,7 +40,10 @@ function buildCorsOrigin(): (origin: string | undefined, cb: (err: Error | null,
 }
 
 async function bootstrap() {
-  const adapter = new FastifyAdapter({ logger: false, trustProxy: true });
+  // Which forwarded address is the person's is the site admin's choice (Admin > Settings > Authentication, read live by
+  // ClientIpPolicyService); trustProxyHop answers for each hop. Hop 0 (Caddy or the web container) is always trusted, so
+  // X-Forwarded-Host/Proto are read exactly as with `trustProxy: true`.
+  const adapter = new FastifyAdapter({ logger: false, trustProxy: trustProxyHop });
   const app = await NestFactory.create<NestFastifyApplication>(AppModule, adapter, {
     bufferLogs: true,
   });

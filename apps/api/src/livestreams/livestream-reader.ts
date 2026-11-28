@@ -1,7 +1,5 @@
 import { spawn } from "node:child_process";
-import { lookup } from "node:dns/promises";
 import {
-  blockedAddress,
   ffmpegMissingStream,
   livestreamFfmpegArgs,
   livestreamFfmpegAudioArgs,
@@ -15,6 +13,7 @@ import {
   type PickedStreams,
   type YtdlpInfo,
 } from "@lampstand/shared";
+import { OutboundBlockedError, assertOutboundHost, outboundBlockedMessage, outboundFetch } from "../net/outbound";
 
 /**
  * Everything that reaches outside the API for a livestream (docs/livestreams.md): yt-dlp for a platform's page, a plain
@@ -70,17 +69,24 @@ export function runProgram(cmd: string, args: string[], opts: { timeoutMs: numbe
 
 export class StreamReadError extends Error {}
 
-/** Refuse a host that resolves to loopback, link-local (cloud metadata) or "any". A private LAN address is allowed. */
+/**
+ * Refuse a link whose host is this machine, link-local (cloud metadata), one of the stack's containers, or a name that
+ * resolves to one. A private LAN address is allowed: an encoder's own HLS output lives there. This is the check for the
+ * programs that connect for themselves (yt-dlp, ffmpeg); the playlist fetch below goes through `outboundFetch`, which
+ * checks the address it actually connects to.
+ */
 export async function assertFetchableHost(url: string): Promise<void> {
-  const host = new URL(url).hostname.replace(/^\[|\]$/g, "");
-  if (blockedAddress(host)) throw new StreamReadError("That address is not allowed.");
-  let addrs: Array<{ address: string }>;
+  let host: string;
   try {
-    addrs = await lookup(host, { all: true });
+    host = new URL(url).hostname;
   } catch {
-    throw new StreamReadError(`${host} could not be found (DNS).`);
+    throw new StreamReadError("That is not a web address.");
   }
-  if (addrs.some((a) => blockedAddress(a.address))) throw new StreamReadError("That address is not allowed.");
+  try {
+    await assertOutboundHost(host);
+  } catch (err) {
+    throw new StreamReadError(err instanceof OutboundBlockedError ? "That address is not allowed." : `${host} could not be found (DNS).`);
+  }
 }
 
 export interface StatusReading {
@@ -140,20 +146,16 @@ export async function readPage(url: string): Promise<StatusReading> {
   };
 }
 
-/** GET with a time limit, following at most three redirects, each target's host checked first. */
-async function guardedFetch(url: string, init: RequestInit = {}): Promise<Response> {
-  let current = url;
-  for (let hop = 0; hop < 4; hop++) {
-    await assertFetchableHost(current);
-    const res = await fetch(current, { ...init, redirect: "manual", signal: AbortSignal.timeout(API_TIMEOUT_MS) });
-    if (res.status >= 300 && res.status < 400 && res.headers.get("location")) {
-      current = new URL(res.headers.get("location")!, current).toString();
-      if (!/^https?:$/.test(new URL(current).protocol)) throw new StreamReadError("The link redirects somewhere that is not a web address.");
-      continue;
-    }
-    return Object.assign(res, { finalUrl: current });
+/** GET with a time limit, following at most three redirects, each target's host checked first and the connection pinned to what DNS said. */
+async function guardedFetch(url: string, init: RequestInit = {}): Promise<Response & { finalUrl?: string }> {
+  try {
+    const res = await outboundFetch(url, { ...init, signal: AbortSignal.timeout(API_TIMEOUT_MS) });
+    return Object.assign(res, { finalUrl: res.url || url });
+  } catch (err) {
+    const blocked = outboundBlockedMessage(err);
+    if (blocked) throw new StreamReadError("That address is not allowed.");
+    throw err;
   }
-  throw new StreamReadError("The link redirects too many times.");
 }
 
 async function readCapped(res: Response, max: number): Promise<string> {
